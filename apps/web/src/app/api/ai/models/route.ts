@@ -1,17 +1,23 @@
+import { isAiProviderId } from "@/lib/ai-settings";
 import { bad, handler, ok, requireValue } from "@/server/api";
-import { getAiKey, getCompatibleBaseUrl, normalizeAiBaseUrl } from "@/server/settings";
+import { getAiBaseUrl, getAiKey, normalizeAiBaseUrl } from "@/server/settings";
 
-async function models(baseUrl: string, key: string | null) {
+async function models(baseUrl: string, key: string | null, anthropic = false) {
+  const headers = new Headers();
+  if (anthropic) {
+    if (key) headers.set("x-api-key", key);
+    headers.set("anthropic-version", "2023-06-01");
+  } else if (key) headers.set("Authorization", `Bearer ${key}`);
   try {
     const response = await fetch(`${baseUrl}/models`, {
-      headers: key ? { Authorization: `Bearer ${key}` } : {},
+      headers,
       redirect: "error",
       cache: "no-store",
       signal: AbortSignal.timeout(10000),
     });
     if (!response.ok) return bad(`Could not list models (HTTP ${response.status}).`, 502);
     const { data } = (await response.json()) as { data?: { id?: unknown }[] };
-    if (!Array.isArray(data)) return bad("The server did not return an OpenAI model list.", 502);
+    if (!Array.isArray(data)) return bad("The server did not return a model list.", 502);
     return ok({
       models: [
         ...new Set(
@@ -26,17 +32,48 @@ async function models(baseUrl: string, key: string | null) {
   }
 }
 
-export const GET = handler(() => {
-  const baseUrl = getCompatibleBaseUrl();
-  return baseUrl ? models(baseUrl, getAiKey("compatible")) : ok({ models: [] });
+function hostedUrl(provider: "anthropic" | "openai") {
+  return (
+    provider === "anthropic"
+      ? process.env.ANTHROPIC_BASE_URL?.trim() || "https://api.anthropic.com/v1"
+      : process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1"
+  ).replace(/\/+$/, "");
+}
+
+export const GET = handler((request: Request) => {
+  const id = new URL(request.url).searchParams.get("provider") ?? "compatible";
+  requireValue(isAiProviderId(id), "Choose a provider.");
+  const key = getAiKey(id);
+  if (id === "anthropic" || id === "openai")
+    return key ? models(hostedUrl(id), key, id === "anthropic") : ok({ models: [] });
+  const baseUrl = getAiBaseUrl(id);
+  return baseUrl ? models(baseUrl, key) : ok({ models: [] });
 });
 
 export const POST = handler(async (request: Request) => {
-  const { baseUrl, apiKey } = (await request.json()) as { baseUrl?: unknown; apiKey?: unknown };
+  const {
+    provider = "compatible",
+    baseUrl,
+    apiKey,
+  } = ((await request.json()) ?? {}) as {
+    provider?: unknown;
+    baseUrl?: unknown;
+    apiKey?: unknown;
+  };
+  requireValue(provider === "new" || isAiProviderId(provider), "Choose a provider.");
+  requireValue(
+    typeof apiKey === "string" && apiKey.length <= 4096 && !/\s/.test(apiKey.trim()),
+    "Invalid API key.",
+  );
+  if (provider === "openai" || provider === "anthropic") {
+    const key = apiKey.trim() || getAiKey(provider);
+    requireValue(key, "Enter an API key.");
+    return models(hostedUrl(provider), key, provider === "anthropic");
+  }
   const normalized = typeof baseUrl === "string" && normalizeAiBaseUrl(baseUrl);
   requireValue(normalized, "Enter a valid server URL.");
-  requireValue(typeof apiKey === "string" && apiKey.length <= 4096, "Invalid API key.");
   const key =
-    apiKey.trim() || (normalized === getCompatibleBaseUrl() ? getAiKey("compatible") : null);
+    apiKey.trim() ||
+    (provider !== "new" && normalized === getAiBaseUrl(provider) ? getAiKey(provider) : null);
   return models(normalized, key);
 });

@@ -1,12 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
-  AI_DEFAULT_MODELS,
   AI_KEY_VARIABLES,
   AI_PROVIDER_NAMES,
-  AI_PROVIDERS,
-  type AiProvider,
+  type AiProviderId,
   type AiSettingsPayload,
 } from "@/lib/ai-settings";
 import { postJson, useApi } from "@/lib/use-api";
@@ -17,177 +15,144 @@ import { Label } from "./ui/label";
 import { OptionSelect } from "./ui/option-select";
 
 export function AiSettings({ onSaved }: { onSaved?: () => void } = {}) {
-  const { data, error, loading, refresh } = useApi<AiSettingsPayload>("/api/settings");
-  const [provider, setProvider] = useState<AiProvider>("anthropic");
-  const [model, setModel] = useState(AI_DEFAULT_MODELS.anthropic);
+  const { data, error, refresh } = useApi<AiSettingsPayload>("/api/settings");
+  const [provider, setProvider] = useState<AiProviderId | "new">("anthropic");
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState<"test" | "save" | "remove">();
   const [failure, setFailure] = useState("");
-  const [saved, setSaved] = useState("");
-  const [models, setModels] = useState<string[]>([]);
-  const [listing, setListing] = useState(false);
+  const [message, setMessage] = useState("");
 
-  useEffect(() => {
-    if (!data) return;
-    setProvider(data.aiProvider);
-    setModel(data.aiModel);
-    setBaseUrl(data.aiConnections.compatible.baseUrl ?? "");
-  }, [data]);
-
-  const connection = data?.aiConnections[provider];
+  const hosted = provider === "anthropic" || provider === "openai";
+  const custom = data?.customAiProviders ?? [];
+  const connection =
+    provider === "new"
+      ? undefined
+      : hosted || provider === "compatible"
+        ? data?.aiConnections[provider]
+        : custom.find(({ id }) => id === provider);
   const environment = connection?.source === "environment";
-  const compatible = provider === "compatible";
-  const name = AI_PROVIDER_NAMES[provider];
-  const disabled = busy || loading || !data;
-  const keyHint = environment
-    ? `Using ${AI_KEY_VARIABLES[provider]} from the server environment. Change or remove that variable on the server to update the key.`
-    : compatible
-      ? connection?.source === "saved"
-        ? "Leave blank to keep your saved key. Saving a different server URL removes it."
-        : "Only needed if your server requires one."
-      : connection?.configured
-        ? "Leave blank to keep your saved key, or enter a replacement."
-        : "Add your API key, then save to use this provider.";
+  const ready = hosted ? Boolean(apiKey.trim() || connection?.source) : Boolean(baseUrl.trim());
+  const disabled = Boolean(busy) || !data;
 
-  const save = async (remove = false) => {
-    setBusy(true);
+  function selectProvider(next: typeof provider) {
+    const profile = custom.find(({ id }) => id === next);
+    setProvider(next);
+    setApiKey("");
+    setName(profile?.name ?? "");
+    setBaseUrl(
+      profile?.baseUrl ??
+        (next === "compatible" ? (data?.aiConnections.compatible.baseUrl ?? "") : ""),
+    );
     setFailure("");
-    setSaved("");
+    setMessage("");
+  }
+
+  async function update(action: NonNullable<typeof busy>) {
+    setBusy(action);
+    setFailure("");
+    setMessage("");
     try {
-      await postJson(
-        "/api/settings",
-        remove
-          ? {
-              [`${provider}Key`]: null,
-            }
-          : {
-              aiProvider: provider,
-              aiModel: model.trim(),
-              ...(compatible ? { compatibleBaseUrl: baseUrl.trim() } : {}),
-              ...(apiKey.trim() ? { [`${provider}Key`]: apiKey.trim() } : {}),
-            },
-        "PATCH",
-      );
+      if (action === "test") {
+        await postJson("/api/ai/models", { provider, baseUrl, apiKey });
+        setMessage("Connection successful.");
+        return;
+      }
+      if (hosted) {
+        await postJson(
+          "/api/settings",
+          {
+            [`${provider}Key`]: action === "remove" ? null : apiKey.trim(),
+          },
+          "PATCH",
+        );
+      } else if (action === "remove") {
+        await postJson("/api/ai/connections", { id: provider }, "DELETE");
+      } else {
+        await postJson("/api/ai/connections", {
+          id: provider === "new" ? undefined : provider,
+          name: name.trim(),
+          baseUrl: baseUrl.trim(),
+          apiKey,
+        });
+      }
+      if (provider === "new" || (!hosted && action === "remove")) selectProvider("anthropic");
       setApiKey("");
-      setSaved(remove ? `${name} key removed.` : `${name} settings saved.`);
+      setMessage(action === "remove" ? "Removed." : "Provider saved.");
       refresh();
       onSaved?.();
     } catch (cause) {
-      setFailure(cause instanceof Error ? cause.message : "Couldn’t save AI settings.");
+      setFailure(cause instanceof Error ? cause.message : "Something went wrong.");
     } finally {
-      setBusy(false);
+      setBusy(undefined);
     }
-  };
-
-  const loadModels = async () => {
-    setListing(true);
-    setFailure("");
-    try {
-      const { models } = await postJson<{ models: string[] }>("/api/ai/models", {
-        baseUrl,
-        apiKey,
-      });
-      setModels(models);
-      if (!models.length) setFailure("No models found. Enter a model ID manually.");
-    } catch (cause) {
-      setFailure(cause instanceof Error ? cause.message : "Could not load models.");
-    } finally {
-      setListing(false);
-    }
-  };
+  }
 
   return (
     <Card id="ai-settings" className="scroll-mt-24">
       <CardHeader>
-        <CardTitle>AI (bring your own key)</CardTitle>
+        <CardTitle>AI providers</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-muted-foreground">
-          Use Anthropic, OpenAI, or an OpenAI-compatible server such as Ollama, LM Studio or
-          OpenRouter for recaps, trade critiques, and “ask your journal”. Your key is encrypted at
-          rest. AI requests go from your server directly to the provider you select.
+          Manage provider connections here. Choose a model on the AI page.
         </p>
-        {data && (
-          <p className="text-xs text-muted-foreground">
-            Active provider: {AI_PROVIDER_NAMES[data.aiProvider]} ·{" "}
-            {data.aiConfigured
-              ? data.aiProvider === "compatible"
-                ? "Server configured"
-                : "Key configured"
-              : "Not configured"}
-          </p>
-        )}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1">
-            <Label htmlFor="ai-provider">Provider</Label>
-            <OptionSelect
-              id="ai-provider"
-              value={provider}
-              disabled={disabled}
-              onValueChange={(value) => {
-                const next = value as AiProvider;
-                setProvider(next);
-                setModel(data?.aiConnections[next].model ?? AI_DEFAULT_MODELS[next]);
-                setApiKey("");
-                setModels([]);
-                setSaved("");
-                setFailure("");
-              }}
-            >
-              {AI_PROVIDERS.map((id) => (
-                <option key={id} value={id}>
-                  {AI_PROVIDER_NAMES[id]}
-                </option>
-              ))}
-            </OptionSelect>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="ai-model">Model ID</Label>
-            <Input
-              id="ai-model"
-              value={model}
-              disabled={disabled}
-              placeholder={compatible ? "e.g. llama3.1:8b" : AI_DEFAULT_MODELS[provider]}
-              onChange={(event) => {
-                setModel(event.target.value);
-                setSaved("");
-              }}
-            />
-          </div>
+        <div className="space-y-1">
+          <Label htmlFor="ai-provider">Provider</Label>
+          <OptionSelect
+            id="ai-provider"
+            value={provider}
+            disabled={disabled}
+            onValueChange={(value) => selectProvider(value as typeof provider)}
+          >
+            <option value="anthropic">Anthropic</option>
+            <option value="openai">OpenAI</option>
+            {data?.aiConnections.compatible.baseUrl && (
+              <option value="compatible">{AI_PROVIDER_NAMES.compatible}</option>
+            )}
+            {custom.map(({ id, name }) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+            <option value="new">Add custom provider</option>
+          </OptionSelect>
         </div>
-        <p className="text-xs text-muted-foreground">
-          Use a text model available to your provider account or server. Each provider keeps its own
-          model and key.
-        </p>
-        {compatible && (
-          <div className="space-y-1">
-            <Label htmlFor="ai-base-url">Server URL</Label>
-            <Input
-              id="ai-base-url"
-              type="url"
-              value={baseUrl}
-              disabled={disabled}
-              placeholder="http://localhost:11434/v1"
-              onChange={(event) => {
-                setBaseUrl(event.target.value);
-                setModels([]);
-                setSaved("");
-              }}
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <p className="text-xs text-muted-foreground">
-              The API root your server documents, usually ending in /v1, such as
-              http://localhost:11434/v1 for Ollama or https://openrouter.ai/api/v1. It must be
-              reachable from the machine running the journal.
-            </p>
-          </div>
+        {!hosted && (
+          <>
+            {provider !== "compatible" && (
+              <div className="space-y-1">
+                <Label htmlFor="ai-name">Provider name</Label>
+                <Input
+                  id="ai-name"
+                  value={name}
+                  maxLength={80}
+                  disabled={disabled}
+                  onChange={(event) => setName(event.target.value)}
+                />
+              </div>
+            )}
+            <div className="space-y-1">
+              <Label htmlFor="ai-base-url">Server URL</Label>
+              <Input
+                id="ai-base-url"
+                type="url"
+                value={baseUrl}
+                disabled={disabled}
+                placeholder="http://localhost:11434/v1"
+                onChange={(event) => {
+                  setBaseUrl(event.target.value);
+                  setMessage("");
+                }}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+          </>
         )}
         <div className="space-y-1">
-          <Label htmlFor="ai-api-key">
-            {compatible ? "API key (optional)" : `${name} API key`}
-          </Label>
+          <Label htmlFor="ai-api-key">{hosted ? "API key" : "API key (optional)"}</Label>
           <Input
             id="ai-api-key"
             type="password"
@@ -195,74 +160,51 @@ export function AiSettings({ onSaved }: { onSaved?: () => void } = {}) {
             disabled={disabled || environment}
             onChange={(event) => {
               setApiKey(event.target.value);
-              setSaved("");
+              setMessage("");
             }}
-            placeholder={
-              connection?.source
-                ? "Key configured"
-                : compatible
-                  ? "Optional"
-                  : provider === "anthropic"
-                    ? "sk-ant-…"
-                    : "sk-…"
-            }
+            placeholder={connection?.source ? "Key configured" : undefined}
             autoComplete="off"
             spellCheck={false}
           />
-          <p className="text-xs text-muted-foreground">{keyHint}</p>
+          {environment && (
+            <p className="text-xs text-muted-foreground">
+              Using {AI_KEY_VARIABLES[provider as "openai" | "anthropic"]} from the server
+              environment.
+            </p>
+          )}
+          {connection?.source === "saved" && !hosted && (
+            <p className="text-xs text-muted-foreground">
+              Leave blank to keep the key for this URL. Changing the URL clears the previous key.
+            </p>
+          )}
         </div>
-        {compatible && (
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              disabled={disabled || listing || !baseUrl.trim()}
-              onClick={loadModels}
-            >
-              {listing ? "Loading models…" : "Load models"}
-            </Button>
-            {!!models.length && (
-              <OptionSelect
-                aria-label="Discovered models"
-                value={models.includes(model) ? model : ""}
-                onValueChange={setModel}
-              >
-                <option value="" disabled>
-                  Select a discovered model
-                </option>
-                {models.map((id) => (
-                  <option value={id} key={id}>
-                    {id}
-                  </option>
-                ))}
-              </OptionSelect>
-            )}
-          </div>
-        )}
         {(error || failure) && (
           <p role="alert" className="text-xs text-destructive">
             {failure || error}
           </p>
         )}
-        {saved && (
+        {message && (
           <p role="status" className="text-xs text-profit">
-            {saved}
+            {message}
           </p>
         )}
         <div className="flex flex-wrap gap-2">
+          <Button variant="outline" disabled={disabled || !ready} onClick={() => update("test")}>
+            {busy === "test" ? "Testing…" : "Test connection"}
+          </Button>
           <Button
             disabled={
               disabled ||
-              listing ||
-              !model.trim() ||
-              (compatible ? !baseUrl.trim() : !apiKey.trim() && !connection?.configured)
+              !ready ||
+              (hosted ? !apiKey.trim() : provider !== "compatible" && !name.trim())
             }
-            onClick={() => save()}
+            onClick={() => update("save")}
           >
-            {busy ? "Saving…" : "Save AI settings"}
+            {busy === "save" ? "Saving…" : "Save provider"}
           </Button>
-          {connection?.source === "saved" && (
-            <Button variant="outline" disabled={disabled} onClick={() => save(true)}>
-              Remove {name} key
+          {(hosted ? connection?.source === "saved" : Boolean(connection)) && (
+            <Button variant="outline" disabled={disabled} onClick={() => update("remove")}>
+              {hosted ? "Remove key" : "Remove provider"}
             </Button>
           )}
         </div>

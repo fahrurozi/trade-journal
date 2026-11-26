@@ -8,7 +8,8 @@ import {
   AI_KEY_VARIABLES,
   isAiProvider,
   type AiConnection,
-  type AiProvider,
+  type AiProviderId,
+  type CustomAiProvider,
   type AiSettingsPayload,
 } from "@/lib/ai-settings";
 
@@ -58,13 +59,13 @@ export const getMultipliers = (): Record<string, number> => {
   }
 };
 
-export const aiKeyEnvironment = (provider: AiProvider): string | null => {
-  const variable = AI_KEY_VARIABLES[provider];
+export const aiKeyEnvironment = (provider: AiProviderId): string | null => {
+  const variable = isAiProvider(provider) && AI_KEY_VARIABLES[provider];
   return (variable && process.env[variable]?.trim()) || null;
 };
 
 /** Provider keys are stored separately and encrypted like broker credentials. */
-export const getAiKey = (provider: AiProvider): string | null => {
+export const getAiKey = (provider: AiProviderId): string | null => {
   const environment = aiKeyEnvironment(provider);
   if (environment) return environment;
   const envelope = getSetting(`${provider}KeyEnc`);
@@ -77,7 +78,7 @@ export const getAiKey = (provider: AiProvider): string | null => {
   }
 };
 
-export const setAiKey = (provider: AiProvider, key: string | null): void => {
+export const setAiKey = (provider: AiProviderId, key: string | null): void => {
   if (key === null) deleteSetting(`${provider}KeyEnc`);
   else setSetting(`${provider}KeyEnc`, encryptJson(key.trim()));
 };
@@ -105,29 +106,42 @@ export const setCompatibleBaseUrl = (url: string, keepKey: boolean): void => {
   setSetting("compatibleBaseUrl", url);
 };
 
-export const getAiProvider = (): AiProvider => {
+export const getCustomAiProviders = (): CustomAiProvider[] =>
+  JSON.parse(getSetting("customAiProviders") ?? "[]") as CustomAiProvider[];
+
+export const getAiBaseUrl = (id: AiProviderId): string | null =>
+  id === "compatible"
+    ? getCompatibleBaseUrl()
+    : isAiProvider(id)
+      ? null
+      : (getCustomAiProviders().find((provider) => provider.id === id)?.baseUrl ?? null);
+
+export const getAiProvider = (): AiProviderId => {
   const selected = getSetting("aiProvider");
   if (isAiProvider(selected)) return selected;
+  const custom = getCustomAiProviders().find(({ id }) => id === selected);
+  if (custom) return custom.id;
   // Preserve existing Anthropic setups; an OpenAI-only setup works without a UI visit.
   return !getAiKey("anthropic") && getAiKey("openai") ? "openai" : "anthropic";
 };
 
 /** Anthropic keeps the legacy "aiModel" key; other providers use "<provider>Model". */
-export const aiModelSetting = (provider: AiProvider): string =>
+export const aiModelSetting = (provider: AiProviderId): string =>
   provider === "anthropic" ? "aiModel" : `${provider}Model`;
 
-export const getAiModel = (provider: AiProvider): string =>
-  getSetting(aiModelSetting(provider))?.trim() || AI_DEFAULT_MODELS[provider];
+export const getAiModel = (provider: AiProviderId): string =>
+  getSetting(aiModelSetting(provider))?.trim() ||
+  (isAiProvider(provider) ? AI_DEFAULT_MODELS[provider] : "");
 
 /** Hosted providers need a key. A compatible server needs a URL and model; its key is optional. */
-export const aiProviderConfigured = (provider: AiProvider): boolean =>
-  provider === "compatible"
-    ? Boolean(getCompatibleBaseUrl() && getAiModel(provider))
-    : getAiKey(provider) !== null;
+export const aiProviderConfigured = (provider: AiProviderId): boolean =>
+  provider === "openai" || provider === "anthropic"
+    ? getAiKey(provider) !== null
+    : Boolean(getAiBaseUrl(provider) && getAiModel(provider));
 
 export const getAiSettings = (): AiSettingsPayload => {
   const aiProvider = getAiProvider();
-  const connection = (provider: AiProvider): AiConnection => ({
+  const connection = (provider: AiProviderId): AiConnection => ({
     configured: aiProviderConfigured(provider),
     source: aiKeyEnvironment(provider)
       ? ("environment" as const)
@@ -135,7 +149,7 @@ export const getAiSettings = (): AiSettingsPayload => {
         ? ("saved" as const)
         : null,
     model: getAiModel(provider),
-    baseUrl: provider === "compatible" ? getCompatibleBaseUrl() : null,
+    baseUrl: getAiBaseUrl(provider),
   });
   const aiConnections = {
     anthropic: connection("anthropic"),
@@ -144,8 +158,9 @@ export const getAiSettings = (): AiSettingsPayload => {
   };
   return {
     aiProvider,
-    aiConfigured: aiConnections[aiProvider].configured,
-    aiModel: aiConnections[aiProvider].model,
+    aiConfigured: aiProviderConfigured(aiProvider),
+    aiModel: getAiModel(aiProvider),
     aiConnections,
+    customAiProviders: getCustomAiProviders().map((p) => ({ ...connection(p.id), ...p })),
   };
 };

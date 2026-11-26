@@ -11,6 +11,9 @@ const { getAiKey, getAiModel, getAiProvider, setSetting, getSetting } =
   await import("../src/server/settings");
 const { GET, PATCH } = await import("../src/app/api/settings/route");
 const { GET: exportData } = await import("../src/app/api/export/route");
+const { POST: saveConnection, DELETE: removeConnection } =
+  await import("../src/app/api/ai/connections/route");
+const { GET: listModels, POST: testConnection } = await import("../src/app/api/ai/models/route");
 const { aiConfigured, runAi } = await import("../src/server/ai");
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }) }));
 
@@ -448,4 +451,80 @@ describe("AI provider requests through the real SDK adapters", () => {
     await vi.runAllTimersAsync();
     expect(((await result) as Error).message).toContain("AI rate limit");
   });
+});
+
+it("keeps custom provider credentials separate through connection test, model selection, and chat", async () => {
+  const baseUrl = "https://gateway.example/v1";
+  expect(
+    (await saveConnection(request({ name: "First", baseUrl, apiKey: "fixture-first" }))).status,
+  ).toBe(200);
+  expect(
+    (await saveConnection(request({ name: "Second", baseUrl, apiKey: "fixture-second" }))).status,
+  ).toBe(200);
+  const snapshot = await state();
+  const [first, second] = snapshot.customAiProviders;
+  expect([first.name, second.name]).toEqual(["First", "Second"]);
+  expect(first.id).not.toBe(second.id);
+  expect(first.model).toBe("");
+  expect(JSON.stringify(snapshot)).not.toContain("fixture-");
+
+  const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/models")) return Response.json({ data: [{ id: "fixture-model" }] });
+    expect(JSON.parse(init.body as string)).toMatchObject({ model: "fixture-model", stream: true });
+    return new Response(
+      [
+        'data: {"choices":[{"delta":{"reasoning_content":"private reasoning"}}]}',
+        'data: {"choices":[{"delta":{"content":"Hello"}}]}',
+        'data: {"choices":[{"delta":{"content":" trader"},"finish_reason":"stop"}]}',
+        "data: [DONE]",
+        "",
+      ].join("\n\n"),
+      { headers: { "Content-Type": "text/event-stream" } },
+    );
+  });
+  vi.stubGlobal("fetch", fetcher);
+  expect((await testConnection(request({ provider: "new", baseUrl, apiKey: "" }))).status).toBe(
+    200,
+  );
+  expect(
+    (await listModels(new Request(`http://localhost/api/ai/models?provider=${second.id}`))).status,
+  ).toBe(200);
+  expect(
+    await runAi(
+      "Hello",
+      120,
+      { provider: first.id, model: "fixture-model" },
+      {
+        system: "Answer briefly",
+        signal: new AbortController().signal,
+      },
+    ),
+  ).toBe("Hello trader");
+  expect(
+    fetcher.mock.calls.map(([url, init]) => [url, new Headers(init.headers).get("Authorization")]),
+  ).toEqual([
+    [`${baseUrl}/models`, null],
+    [`${baseUrl}/models`, "Bearer fixture-second"],
+    [`${baseUrl}/chat/completions`, "Bearer fixture-first"],
+  ]);
+
+  expect((await save({ aiProvider: first.id, aiModel: "fixture-model" })).status).toBe(200);
+  expect(getAiProvider()).toBe(first.id);
+  expect(
+    (
+      await saveConnection(
+        request({
+          id: first.id,
+          name: "First",
+          baseUrl: "https://elsewhere.example/v1",
+          apiKey: "",
+        }),
+      )
+    ).status,
+  ).toBe(200);
+  expect(getAiKey(first.id)).toBeNull();
+  expect(getAiModel(first.id)).toBe("");
+  expect((await removeConnection(request({ id: second.id }))).status).toBe(200);
+  expect(getAiKey(second.id)).toBeNull();
+  expect((await state()).customAiProviders).toHaveLength(1);
 });

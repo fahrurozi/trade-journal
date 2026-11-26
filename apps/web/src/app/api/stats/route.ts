@@ -13,44 +13,14 @@ import {
   computeOverview,
   dailyCumulativeFromDays,
   dayKeyOf,
-  type AnnotatedTrade,
 } from "@luxalgo/journal-core";
-import { asc, inArray } from "drizzle-orm";
-import { accounts, db, executions, playbooks } from "@/db";
+import { asc } from "drizzle-orm";
+import { accounts, db, playbooks } from "@/db";
 import { calendarRunningPnl } from "@/lib/calendar-insights";
 import { handler, ok } from "@/server/api";
 import { getTimeZone, getCurrencyConversion } from "@/server/settings";
 import { currencyProjection } from "@/server/currency-conversion";
 import { queryTrades, type TradeFilters } from "@/server/trades-query";
-
-/** Count and sum only the sells inside the selected period, even when the position opened earlier. */
-function openSpotSales(trades: AnnotatedTrade[], filters: TradeFilters, timeZone: string) {
-  const exits = trades.flatMap((trade) => trade.exits);
-  const ids = [...new Set(exits.map((exit) => exit.executionId))];
-  let eligible = new Set(ids);
-  if (filters.from || filters.to) {
-    eligible = new Set();
-    for (let offset = 0; offset < ids.length; offset += 500) {
-      const dates = db
-        .select({ id: executions.id, time: executions.executedAt })
-        .from(executions)
-        .where(inArray(executions.id, ids.slice(offset, offset + 500)))
-        .all();
-      for (const { id, time } of dates) {
-        const day = dayKeyOf(time, timeZone);
-        if ((!filters.from || day >= filters.from) && (!filters.to || day <= filters.to))
-          eligible.add(id);
-      }
-    }
-  }
-  return {
-    fills: eligible.size,
-    grossPnl: exits.reduce(
-      (pnl, exit) => pnl + (eligible.has(exit.executionId) ? exit.grossPnl : 0),
-      0,
-    ),
-  };
-}
 
 /** The entire dashboard in one request. */
 export const GET = handler(async (request: Request) => {
@@ -68,51 +38,14 @@ export const GET = handler(async (request: Request) => {
           .includes(a.id),
       )
     : accountRows;
-  const conversion = getCurrencyConversion();
   const {
     trades,
     initialBalance,
     scope: currencyScope,
-  } = currencyProjection(originalTrades, selected, conversion);
+  } = currencyProjection(originalTrades, selected, getCurrencyConversion());
 
   const { metrics, days, equity } = computeOverview(trades, { timeZone, initialBalance });
   const accountCurrencies = new Map(accountRows.map((a) => [a.id, a.currency]));
-  const bitgetAccounts = new Set(
-    selected.filter((account) => account.broker === "bitget").map((account) => account.id),
-  );
-  let bitgetOpenSales = null;
-  if (
-    currencyScope.monetary &&
-    bitgetAccounts.size > 0 &&
-    (!filters.status || filters.status === "open") &&
-    (!filters.assetClass || filters.assetClass === "crypto")
-  ) {
-    const openSpotTrades =
-      filters.from || filters.to
-        ? currencyProjection(
-            queryTrades({
-              ...filters,
-              accounts: [...bitgetAccounts].join(","),
-              from: undefined,
-              to: undefined,
-              status: "open",
-              assetClass: "crypto",
-            }).trades,
-            selected,
-            conversion,
-          ).trades
-        : trades.filter(
-            (trade) =>
-              bitgetAccounts.has(trade.accountId) &&
-              trade.assetClass === "crypto" &&
-              trade.status === "open",
-          );
-    bitgetOpenSales = openSpotSales(
-      openSpotTrades.filter((trade) => trade.direction === "long"),
-      filters,
-      timeZone,
-    );
-  }
 
   const today = dayKeyOf(new Date().toISOString(), timeZone);
   const calendarYear = Number(url.searchParams.get("calYear") ?? today.slice(0, 4));
@@ -196,6 +129,5 @@ export const GET = handler(async (request: Request) => {
         status: t.status,
       })),
     initialBalance,
-    bitgetOpenSales,
   });
 });

@@ -12,6 +12,16 @@ vi.mock("@/lib/use-api", () => ({
   postJson: (...args: unknown[]) => state.post(...args),
   useApi: () => ({ data: state.data, error: null, loading: false, refresh: state.refresh }),
 }));
+vi.mock("@/components/ui/option-select", () => ({
+  OptionSelect: ({
+    onValueChange,
+    ...props
+  }: React.ComponentProps<"select"> & { onValueChange: (value: string) => void }) =>
+    createElement("select", {
+      ...props,
+      onChange: (event) => onValueChange(event.currentTarget.value),
+    }),
+}));
 const { AiSettings } = await import("../src/components/ai-settings");
 let container: HTMLDivElement;
 let root: Root;
@@ -62,56 +72,71 @@ const type = (id: string, value: string) =>
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
-const saveButton = () =>
+const button = (text: string) =>
   Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-    (b) => b.textContent === "Save AI settings",
+    (element) => element.textContent === text,
   )!;
+const choose = (id: string) =>
+  act(async () => {
+    const select = container.querySelector<HTMLSelectElement>("#ai-provider")!;
+    select.value = id;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
 
-it("saves an OpenAI-compatible server with a model and no key", async () => {
-  await render(settings("compatible"));
-  expect(container.textContent).toContain("API key (optional)");
-  expect(saveButton().disabled).toBe(true);
-  await type("ai-model", "llama3.1:8b");
-  expect(saveButton().disabled).toBe(true);
-  await type("ai-base-url", " http://localhost:11434/v1 ");
-  expect(saveButton().disabled).toBe(false);
-  await act(async () => saveButton().click());
-  expect(state.post).toHaveBeenCalledWith(
-    "/api/settings",
-    {
-      aiProvider: "compatible",
-      aiModel: "llama3.1:8b",
-      compatibleBaseUrl: "http://localhost:11434/v1",
-    },
-    "PATCH",
-  );
+it("tests and saves a custom provider without choosing a model", async () => {
+  await render(settings("anthropic"));
+  await choose("new");
+  expect(field("ai-model")).toBeNull();
+  expect(button("Save provider").disabled).toBe(true);
+  await type("ai-base-url", "http://localhost:11434/v1");
+  await act(async () => button("Test connection").click());
+  expect(state.post).toHaveBeenCalledWith("/api/ai/models", {
+    provider: "new",
+    baseUrl: "http://localhost:11434/v1",
+    apiKey: "",
+  });
+  expect(container.textContent).toContain("Connection successful.");
+  await type("ai-name", "Local Ollama");
+  await act(async () => button("Save provider").click());
+  expect(state.post).toHaveBeenCalledWith("/api/ai/connections", {
+    id: undefined,
+    name: "Local Ollama",
+    baseUrl: "http://localhost:11434/v1",
+    apiKey: "",
+  });
   expect(state.refresh).toHaveBeenCalled();
 });
 
-it("shows the saved server and warns that a new URL drops its saved key", async () => {
-  await render(
-    settings("compatible", {
+it("lists independent custom providers and preserves legacy connections", async () => {
+  const first = "custom:11111111-1111-1111-1111-111111111111";
+  const second = "custom:22222222-2222-2222-2222-222222222222";
+  await render({
+    ...settings("compatible", {
       compatible: connection("router-model", {
         configured: true,
         source: "saved",
         baseUrl: "https://router.example/api/v1",
       }),
     }),
-  );
+    customAiProviders: [
+      { ...connection(""), id: first, name: "Local", baseUrl: "https://local.example/v1" },
+      { ...connection(""), id: second, name: "Remote", baseUrl: "https://remote.example/v1" },
+    ],
+  });
+  await choose(first);
+  expect(field("ai-base-url")!.value).toBe("https://local.example/v1");
+  await choose(second);
+  expect(field("ai-base-url")!.value).toBe("https://remote.example/v1");
+  await choose("compatible");
   expect(field("ai-base-url")!.value).toBe("https://router.example/api/v1");
-  expect(container.textContent).toContain("Saving a different server URL removes it.");
-  expect(container.textContent).toContain("Remove OpenAI-compatible key");
-  expect(container.textContent).toContain("Server configured");
+  expect(button("Remove provider")).toBeTruthy();
 });
 
-it("keeps hosted providers free of a server URL", async () => {
-  await render(
-    settings("openai", {
-      openai: connection("gpt-4.1-mini", { configured: true, source: "saved" }),
-      compatible: connection("llama3.1:8b", { baseUrl: "http://localhost:11434/v1" }),
-    }),
-  );
+it("saves a hosted API key without changing model selection", async () => {
+  await render(settings("openai"));
+  await choose("openai");
   expect(field("ai-base-url")).toBeNull();
-  await act(async () => saveButton().click());
-  expect(state.post.mock.calls[0]![1]).toEqual({ aiProvider: "openai", aiModel: "gpt-4.1-mini" });
+  await type("ai-api-key", "fixture-key");
+  await act(async () => button("Save provider").click());
+  expect(state.post).toHaveBeenCalledWith("/api/settings", { openaiKey: "fixture-key" }, "PATCH");
 });

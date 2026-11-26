@@ -64,7 +64,6 @@ interface StatsPayload {
   calendar: CalendarMonth;
   calendarCurrencies: string[];
   runningPnl: Record<string, CalendarPnlPoint[]>;
-  bitgetOpenSales?: { fills: number; grossPnl: number } | null;
   buckets: Record<"symbol" | "weekday" | "hour" | "duration" | "direction", Bucket[]>;
   openPositions: {
     key: string;
@@ -182,39 +181,16 @@ function DashboardContent({
   const { metrics: m, edgeScore } = data;
   if (!m || !edgeScore) return null;
   const currency = data.currencyScope.currency ?? "USD";
-  const bitgetSales = data.bitgetOpenSales;
-  const spotSales = bitgetSales && bitgetSales.fills > 0 && (
-    <div className="px-4 pt-4">
-      <Card>
-        <CardHeader>
-          <CardTitle>Bitget Spot sales from open positions</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Pnl
-            value={bitgetSales.grossPnl}
-            currency={currency}
-            className="text-2xl font-semibold"
-          />
-          <p className="mt-1 text-xs text-muted-foreground">
-            Gross realized P&L before fees · {bitgetSales.fills} sell fills
-          </p>
-        </CardContent>
-      </Card>
-    </div>
-  );
 
   if (m.totalTrades === 0)
-    return (
-      spotSales ||
-      (query ? (
-        <div>
-          <p className="p-12 text-center text-sm text-muted-foreground">
-            No trades match these filters. Clear or adjust Filters to see more results.
-          </p>
-        </div>
-      ) : (
-        <EmptyState />
-      ))
+    return query ? (
+      <div>
+        <p className="p-12 text-center text-sm text-muted-foreground">
+          No trades match these filters. Clear or adjust Filters to see more results.
+        </p>
+      </div>
+    ) : (
+      <EmptyState />
     );
 
   // Momentum: net P&L of the last 7 calendar days vs the 7 before them.
@@ -247,7 +223,6 @@ function DashboardContent({
   return (
     <>
       <CurrencyNotice scope={data.currencyScope} />
-      {spotSales}
       <DashboardLayout
         widgets={[
           {

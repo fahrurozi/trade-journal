@@ -9,13 +9,20 @@ import {
   aiKeyEnvironment,
   aiModelSetting,
   getAiProvider,
+  getAiBaseUrl,
   getAiSettings,
   normalizeAiBaseUrl,
   setAiKey,
   setCompatibleBaseUrl,
   setSetting,
 } from "@/server/settings";
-import { AI_PROVIDERS, AI_PROVIDER_NAMES, isAiProvider, type AiProvider } from "@/lib/ai-settings";
+import {
+  AI_PROVIDERS,
+  AI_PROVIDER_NAMES,
+  isAiProvider,
+  isAiProviderId,
+  type AiProviderId,
+} from "@/lib/ai-settings";
 import { isTimeZone } from "@/lib/timezone";
 import { parseCurrencyConversion, type CurrencyConversion } from "@/lib/currencies";
 
@@ -39,7 +46,7 @@ interface SettingsBody {
   compatibleKey?: string | null;
   /** OpenAI-compatible API root. A different URL clears the saved key unless one is sent. */
   compatibleBaseUrl?: string;
-  aiProvider?: AiProvider;
+  aiProvider?: AiProviderId;
   aiModel?: string;
   currencyConversion?: CurrencyConversion;
 }
@@ -74,7 +81,8 @@ export const PATCH = handler(async (request: Request) => {
   }
   if (body.aiProvider !== undefined)
     requireValue(
-      isAiProvider(body.aiProvider),
+      isAiProviderId(body.aiProvider) &&
+        (isAiProvider(body.aiProvider) || getAiBaseUrl(body.aiProvider)),
       "Choose Anthropic, OpenAI or an OpenAI-compatible server.",
     );
   const provider = body.aiProvider ?? getAiProvider();

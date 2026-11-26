@@ -130,7 +130,8 @@ it("clears a conversation while thinking and ignores its late reply", async () =
   expect(container.querySelector('[data-chat-state="active"]')).toBeTruthy();
   const status = container.querySelector('[role="log"] [role="status"]')!;
   expect(status.querySelector('[aria-hidden="true"]')?.children).toHaveLength(3);
-  expect(status.lastElementChild?.textContent).toBe("Thinking…");
+  expect(status.getAttribute("aria-label")).toBe("Waiting for AI");
+  expect(status.textContent).toBe("");
 
   await send("/clear");
   expect(signal.aborted).toBe(true);

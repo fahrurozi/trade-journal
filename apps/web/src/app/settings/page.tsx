@@ -51,7 +51,7 @@ const sections = [
     id: "ai-settings",
     label: "AI",
     icon: Sparkles,
-    description: "Choose your AI provider and manage your model and API key.",
+    description: "Manage AI provider connections and API keys.",
   },
   {
     id: "your-data",

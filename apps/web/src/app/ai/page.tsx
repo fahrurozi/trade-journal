@@ -9,6 +9,7 @@ import { FileImport } from "@/components/file-import";
 import { FilterBar, useFilters } from "@/components/filter-bar";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { OptionSelect } from "@/components/ui/option-select";
 import PromptComposer from "@/components/ui/prompt-composer";
 import {
@@ -21,7 +22,7 @@ import {
 import {
   AI_PROVIDERS,
   AI_PROVIDER_NAMES,
-  type AiProvider,
+  type AiProviderId,
   type AiSettingsPayload,
 } from "@/lib/ai-settings";
 import { postJson, useApi } from "@/lib/use-api";
@@ -55,9 +56,28 @@ function AiView() {
   const { values, query, timeZone } = useFilters();
   const { data: settings, refresh } = useApi<AiSettingsPayload>("/api/settings");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [providerOverride, setProviderOverride] = useState<AiProvider>();
-  const provider = providerOverride ?? settings?.aiProvider ?? "compatible";
-  const connection = settings?.aiConnections[provider];
+  const [providerOverride, setProviderOverride] = useState<AiProviderId>();
+  const providers = [
+    ...AI_PROVIDERS.map((id) => ({
+      id,
+      name: AI_PROVIDER_NAMES[id],
+      connection: settings?.aiConnections[id],
+    })),
+    ...(settings?.customAiProviders ?? []).map(({ id, name, ...connection }) => ({
+      id,
+      name,
+      connection,
+    })),
+  ];
+  const available = providers.filter(
+    ({ connection }) => connection?.baseUrl || connection?.configured,
+  );
+  const selected =
+    available.find(({ id }) => id === providerOverride) ??
+    available.find(({ id }) => id === settings?.aiProvider) ??
+    available[0];
+  const provider = selected?.id ?? "compatible";
+  const connection = selected?.connection;
   return (
     <div className="flex h-[calc(100dvh-var(--journal-header-offset))] min-h-[28rem] flex-col">
       <FilterBar
@@ -69,14 +89,13 @@ function AiView() {
         }
       />
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
           <DialogTitle>AI settings</DialogTitle>
           <DialogDescription>
             Configure a provider or enter your own OpenAI-compatible API URL and key.
           </DialogDescription>
           <AiSettings
             onSaved={() => {
-              setProviderOverride(undefined);
               refresh();
             }}
           />
@@ -89,11 +108,11 @@ function AiView() {
           timeZone={timeZone}
           provider={provider}
           defaultModel={connection?.model ?? ""}
-          providers={AI_PROVIDERS.filter(
-            (id) => id === provider || settings?.aiConnections[id].configured,
-          )}
+          providers={
+            available.length ? available : [{ id: provider, name: AI_PROVIDER_NAMES.compatible }]
+          }
           onProviderChange={setProviderOverride}
-          canChat={Boolean(connection?.configured)}
+          canChat={Boolean(selected)}
         />
       </div>
     </div>
@@ -111,18 +130,44 @@ function JournalChat({
 }: {
   filters: AnalysisFilters;
   timeZone: string;
-  provider: AiProvider;
+  provider: AiProviderId;
   defaultModel: string;
-  providers: AiProvider[];
-  onProviderChange: (provider: AiProvider) => void;
+  providers: { id: AiProviderId; name: string }[];
+  onProviderChange: (provider: AiProviderId) => void;
   canChat: boolean;
 }) {
   const { data: modelList, error: modelError } = useApi<{ models: string[] }>(
-    provider === "compatible" && canChat ? "/api/ai/models" : null,
+    canChat
+      ? provider === "compatible"
+        ? "/api/ai/models"
+        : `/api/ai/models?provider=${encodeURIComponent(provider)}`
+      : null,
   );
   const [modelOverride, setModelOverride] = useState<string>();
   const model = modelOverride ?? defaultModel;
-  const models = [...new Set([defaultModel, ...(modelList?.models ?? [])].filter(Boolean))];
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualModel, setManualModel] = useState("");
+  const [modelSaveError, setModelSaveError] = useState("");
+  const [savingModel, setSavingModel] = useState(false);
+  const selectModel = async (value: string) => {
+    if (value === "__manual__") {
+      setManualModel("");
+      setManualOpen(true);
+      return;
+    }
+    setSavingModel(true);
+    setModelSaveError("");
+    try {
+      await postJson("/api/settings", { aiProvider: provider, aiModel: value }, "PATCH");
+      setModelOverride(value);
+      setManualOpen(false);
+    } catch (cause) {
+      setModelSaveError(cause instanceof Error ? cause.message : "Could not save this model.");
+    } finally {
+      setSavingModel(false);
+    }
+  };
+  const models = [...new Set([model, defaultModel, ...(modelList?.models ?? [])].filter(Boolean))];
   const [pending, setPending] = useState("");
   const [history, setHistory] = useState<Exchange[]>([]);
   const [scope, setScope] = useState<string>();
@@ -144,7 +189,7 @@ function JournalChat({
       setScope(undefined);
       return;
     }
-    if (!text || busy || !canChat || !model) return;
+    if (!text || busy || savingModel || !canChat || !model) return;
     setPending(text);
     void run(
       (signal) =>
@@ -204,7 +249,12 @@ function JournalChat({
         )}
         {modelError && (
           <p role="status" className="text-xs text-muted-foreground">
-            {modelError} You can use the saved model.
+            {modelError} Enter a model ID in the chat model picker.
+          </p>
+        )}
+        {modelSaveError && (
+          <p role="alert" className="text-xs text-destructive">
+            {modelSaveError}
           </p>
         )}
         {scope && <p className="shrink-0 text-xs text-muted-foreground">{scope}</p>}
@@ -230,7 +280,7 @@ function JournalChat({
             </p>
           )}
           {busy && (
-            <div role="status" className="w-fit space-y-1">
+            <div role="status" aria-label="Waiting for AI" className="w-fit">
               <div
                 aria-hidden="true"
                 className="flex items-center gap-1.5 rounded-2xl border bg-card px-4 py-3 text-muted-foreground"
@@ -239,7 +289,6 @@ function JournalChat({
                 <i className="size-1.5 rounded-full bg-current motion-safe:animate-bounce [animation-delay:120ms]" />
                 <i className="size-1.5 rounded-full bg-current motion-safe:animate-bounce [animation-delay:240ms]" />
               </div>
-              <p className="text-right text-xs text-muted-foreground">Thinking…</p>
             </div>
           )}
           {error && <AiNotice error={error} onRetry={() => send(pending)} onDismiss={dismiss} />}
@@ -253,7 +302,7 @@ function JournalChat({
           prompts={EXAMPLE_QUESTIONS}
           placeholder="Ask a question or type /clear"
           maxLength={10000}
-          disabled={busy || !canChat || !model}
+          disabled={busy || savingModel || !canChat || !model}
           allowCommand={isClearCommand}
           onSubmit={send}
           onAttach={() => setImportOpen(true)}
@@ -263,19 +312,19 @@ function JournalChat({
                 aria-label="Chat provider"
                 className={TOOL_TRIGGER}
                 value={provider}
-                disabled={busy}
-                onValueChange={(value) => onProviderChange(value as AiProvider)}
+                disabled={busy || savingModel}
+                onValueChange={(value) => onProviderChange(value as AiProviderId)}
               >
-                {providers.map((id) => (
+                {providers.map(({ id, name }) => (
                   <option key={id} value={id}>
-                    {AI_PROVIDER_NAMES[id]}
+                    {name}
                   </option>
                 ))}
               </OptionSelect>
               <Select
                 value={model}
-                disabled={busy || !models.length}
-                onValueChange={setModelOverride}
+                disabled={busy || savingModel || !canChat}
+                onValueChange={selectModel}
               >
                 <SelectTrigger
                   aria-label="Chat model"
@@ -290,11 +339,40 @@ function JournalChat({
                       {id}
                     </SelectItem>
                   ))}
+                  <SelectItem value="__manual__">Enter model ID…</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           }
         />
+        <Dialog open={manualOpen} onOpenChange={setManualOpen}>
+          <DialogContent>
+            <DialogTitle>Enter a model ID</DialogTitle>
+            <DialogDescription>Use the model ID listed by your provider.</DialogDescription>
+            <form
+              className="space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void selectModel(manualModel.trim());
+              }}
+            >
+              <Input
+                aria-label="Model ID"
+                value={manualModel}
+                maxLength={200}
+                onChange={(event) => setManualModel(event.target.value)}
+              />
+              {modelSaveError && (
+                <p role="alert" className="text-xs text-destructive">
+                  {modelSaveError}
+                </p>
+              )}
+              <Button disabled={savingModel || !manualModel.trim()} type="submit">
+                Use model
+              </Button>
+            </form>
+          </DialogContent>
+        </Dialog>
         <Dialog open={importOpen} onOpenChange={setImportOpen}>
           <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl">
             <DialogTitle>Import a trading statement</DialogTitle>

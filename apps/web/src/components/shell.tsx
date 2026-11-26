@@ -39,12 +39,12 @@ const NAV = [
   { href: "/journal", label: "Daily journal", icon: NotebookPen },
   { href: "/trades", label: "Trades", icon: ListOrdered },
   { href: "/reports", label: "Reports", icon: BarChart3 },
-  { href: "/ai", label: "AI", icon: Sparkles },
   { href: "/prop-firms", label: "Prop firms", icon: Landmark },
   { href: "/notebook", label: "Notebook", icon: BookText },
   { href: "/playbooks", label: "Playbooks", icon: BookOpen },
   { href: "/progress", label: "Progress", icon: ListChecks },
   { href: "/missed", label: "Missed trades", icon: BookmarkPlus },
+  { href: "/ai", label: "AI", icon: Sparkles },
 ] as const;
 
 const NAV_SETUP = [

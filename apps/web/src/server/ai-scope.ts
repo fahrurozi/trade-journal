@@ -7,7 +7,7 @@ import {
 import { db, accounts, playbooks } from "@/db";
 import { describeFilters } from "@/lib/filter-description";
 import { requireValue } from "./api";
-import { isAiProvider } from "@/lib/ai-settings";
+import { isAiProviderId } from "@/lib/ai-settings";
 import { getTimeZone } from "./settings";
 
 export function isDay(value: unknown): value is string {
@@ -136,7 +136,7 @@ export function readAiRequest(value: unknown, field: "question" | "date") {
     );
     const { provider, model } = body.modelSelection as Record<string, unknown>;
     requireValue(
-      isAiProvider(provider) && typeof model === "string" && model.trim() && model.length <= 200,
+      isAiProviderId(provider) && typeof model === "string" && model.trim() && model.length <= 200,
       "Invalid AI model selection",
     );
     modelSelection = { provider, model: model.trim() };

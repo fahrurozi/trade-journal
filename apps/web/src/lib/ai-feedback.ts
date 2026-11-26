@@ -64,12 +64,11 @@ export function aiFeedback(message: string): AiFeedback {
         "Check the billing, credit balance, or quota on your AI provider account, then try again.",
       tone: "info",
     };
-  if (/model unavailable|model_not_found/i.test(message))
+  if (/model unavailable|model_not_found|AI model rejected|unsupported response/i.test(message))
     return {
       title: "Check your AI model",
-      description: "Check the model ID and your provider account’s access in Settings.",
+      description: "Try another model in the chat and check which models your provider allows.",
       tone: "error",
-      action: { label: "Review AI settings", href: "/settings#ai-settings" },
     };
   if (/AI server unreachable/i.test(message))
     return {
