@@ -153,8 +153,8 @@ it("corrects previously synced spot fills once and presents closed trades on the
       .orderBy(asc(executions.id))
       .all();
   const originalIds = rows().map(({ id, contentHash }) => [id, contentHash]);
-  const dashboard = async () =>
-    (await stats(new Request(`http://localhost/api/stats?accounts=${id}`))).json();
+  const dashboard = async (dateQuery = "") =>
+    (await stats(new Request(`http://localhost/api/stats?accounts=${id}${dateQuery}`))).json();
   expect((await dashboard()).metrics).toMatchObject({ totalTrades: 2, closedTrades: 0 });
 
   vi.mocked(fetchBitgetHistory)
@@ -174,6 +174,14 @@ it("corrects previously synced spot fills once and presents closed trades on the
   expect(updated.recentTrades[0].netPnl).toBeCloseTo(8.9);
   expect(updated.openPositions[0]).toMatchObject({ symbol: "ETHUSDT" });
   expect(updated.openPositions[0].quantity).toBeCloseTo(0.24);
+  expect(updated.bitgetOpenSales).toMatchObject({ fills: 1, grossPnl: 7.5 });
+  // The sell belongs to its execution day even if the remaining lot opened before it.
+  expect((await dashboard("&from=2026-09-02&to=2026-09-02")).bitgetOpenSales).toMatchObject({
+    fills: 1,
+    grossPnl: 7.5,
+  });
+  expect((await dashboard("&from=2026-09-01&to=2026-09-01")).bitgetOpenSales.fills).toBe(0);
+  expect((await dashboard("&status=closed")).bitgetOpenSales).toBeNull();
   expect((await sync()).sync).not.toHaveProperty("correctedSpotFills");
   expect(fetchBitgetHistory).toHaveBeenLastCalledWith(credentials, expect.any(String));
   expect(rows()).toHaveLength(4);
