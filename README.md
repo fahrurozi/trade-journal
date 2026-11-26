@@ -107,6 +107,8 @@ Statement parsing uses the existing OpenAI or Anthropic parsers.
 Under **Import → Broker sync**, choose **Bitget** and connect a read-only HMAC key. Connect one
 journal account per Classic market: USDT-quoted spot, USDT-M futures, or USDC-M futures. Sync reads
 up to 90 days of fills. It converts base-asset fees at the fill price and omits fees in third tokens.
+After a DNS or connection failure, sync can resolve `api.bitget.com` through Google Public DNS over
+HTTPS. The resolver receives only the hostname. Signed requests still go directly to Bitget.
 
 ### Add a trade manually
 

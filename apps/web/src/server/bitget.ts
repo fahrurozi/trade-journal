@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Trade } from "@luxalgo/broker-sdk";
+import { BITGET_HOST, bitgetDnsFallback, isBitgetConnectionFailure } from "./bitget-network";
 
 export const bitgetBroker = {
   id: "bitget",
@@ -100,9 +101,9 @@ export async function fetchBitgetHistory(
   historySince?: string,
   request: typeof fetch = fetch,
 ) {
-  const [apiKey, apiSecret, passphrase] = ["apiKey", "apiSecret", "passphrase"].map((name) =>
-    credentials[name]?.trim(),
-  );
+  const apiKey = credentials.apiKey?.trim();
+  const apiSecret = credentials.apiSecret?.trim();
+  const passphrase = credentials.passphrase?.trim();
   if (!apiKey || !apiSecret || !passphrase)
     throw new Error("Bitget API key, secret and passphrase are required.");
   const market = credentials.market ?? "spot";
@@ -119,6 +120,30 @@ export async function fetchBitgetHistory(
   const trades: Trade[] = [];
   let skipped = 0;
   let previousRequest = 0;
+  let useDnsFallback = false;
+  const requestPage = async (target: string) => {
+    if (previousRequest) await delay(Math.max(0, 125 - (Date.now() - previousRequest)));
+    previousRequest = Date.now();
+    const timestamp = String(previousRequest);
+    const signature = createHmac("sha256", apiSecret)
+      .update(`${timestamp}GET${target}`)
+      .digest("base64");
+    const options = {
+      headers: {
+        "ACCESS-KEY": apiKey,
+        "ACCESS-SIGN": signature,
+        "ACCESS-TIMESTAMP": timestamp,
+        "ACCESS-PASSPHRASE": passphrase,
+        locale: "en-US",
+      },
+      redirect: "error",
+      cache: "no-store",
+      signal: AbortSignal.timeout(10000),
+      ...(useDnsFallback ? { dispatcher: bitgetDnsFallback } : {}),
+    } as const;
+    return request(`https://${BITGET_HOST}${target}`, options);
+  };
+
   for (let from = start; from < now; from += interval) {
     const query = new URLSearchParams({
       startTime: String(from),
@@ -128,23 +153,11 @@ export async function fetchBitgetHistory(
     });
     const cursors = new Set<string>();
     while (true) {
-      if (previousRequest) await delay(Math.max(0, 125 - (Date.now() - previousRequest)));
-      previousRequest = Date.now();
-      const timestamp = String(previousRequest);
       const target = `${path}?${query}`;
-      const signature = createHmac("sha256", apiSecret)
-        .update(`${timestamp}GET${target}`)
-        .digest("base64");
-      const response = await request(`https://api.bitget.com${target}`, {
-        headers: {
-          "ACCESS-KEY": apiKey,
-          "ACCESS-SIGN": signature,
-          "ACCESS-TIMESTAMP": timestamp,
-          "ACCESS-PASSPHRASE": passphrase,
-          locale: "en-US",
-        },
-        redirect: "error",
-        signal: AbortSignal.timeout(10000),
+      const response = await requestPage(target).catch((error: unknown) => {
+        if (useDnsFallback || !isBitgetConnectionFailure(error)) throw error;
+        useDnsFallback = true;
+        return requestPage(target);
       });
       if (!response.ok) throw new Error(`Bitget history request failed (HTTP ${response.status}).`);
       const body = (await response.json()) as {
