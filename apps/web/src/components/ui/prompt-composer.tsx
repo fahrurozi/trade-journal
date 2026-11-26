@@ -1,7 +1,6 @@
 "use client";
 
 import { type PointerEvent, type ReactNode, useEffect, useState } from "react";
-import { gsap } from "gsap";
 import { ArrowUp, Paperclip } from "lucide-react";
 import styles from "./prompt-composer.module.css";
 
@@ -20,49 +19,52 @@ function useAnimatedPrompt(prompts: readonly string[], active: boolean) {
 
   useEffect(() => {
     setTyped(null);
-    if (!active || !prompts.length) return;
+    if (!active) return;
+
+    const examples = prompts.filter(Boolean);
+    if (!examples.length) return;
 
     const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-    if (!motion) {
-      setTyped(prompts[0]!);
-      return;
+    let timer: number | undefined;
+    let index = 0;
+    let length = 0;
+    let deleting = false;
+
+    function tick() {
+      const example = examples[index]!;
+      length += deleting ? -1 : 1;
+      setTyped(example.slice(0, length));
+
+      let delay = deleting ? 16 : 45;
+      if (!deleting && length === example.length) {
+        deleting = true;
+        delay = 2200;
+      } else if (deleting && length === 0) {
+        index = (index + 1) % examples.length;
+        deleting = false;
+        delay = 350;
+      }
+      timer = window.setTimeout(tick, delay);
     }
-    const play = () => {
-      if (motion.matches) {
-        setTyped(prompts[0]!);
+
+    function play() {
+      window.clearTimeout(timer);
+      if (!motion || motion.matches) {
+        setTyped(examples[0]!);
         return;
       }
-
-      const cursor = { length: 0 };
-      const timeline = gsap.timeline({ repeat: -1, delay: 0.6 });
-      for (const prompt of prompts) {
-        const update = () => setTyped(prompt.slice(0, Math.round(cursor.length)));
-        timeline.to(cursor, {
-          length: prompt.length,
-          duration: prompt.length * 0.045,
-          ease: "none",
-          onUpdate: update,
-        });
-        timeline.to(
-          cursor,
-          { length: 0, duration: prompt.length * 0.016, ease: "none", onUpdate: update },
-          "+=2.2",
-        );
-        timeline.to(cursor, { length: 0, duration: 0.35 });
-      }
-      return () => timeline.kill();
-    };
-
-    let stop = play();
-    const change = () => {
-      stop?.();
+      index = 0;
+      length = 0;
+      deleting = false;
       setTyped(null);
-      stop = play();
-    };
-    motion.addEventListener("change", change);
+      timer = window.setTimeout(tick, 600);
+    }
+
+    play();
+    motion?.addEventListener("change", play);
     return () => {
-      motion.removeEventListener("change", change);
-      stop?.();
+      motion?.removeEventListener("change", play);
+      window.clearTimeout(timer);
     };
   }, [active, prompts]);
 
