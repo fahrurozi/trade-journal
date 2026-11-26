@@ -1,0 +1,197 @@
+.card {
+  --composer-glass: rgb(255 255 255 / 0.66);
+  --composer-line: rgb(44 83 120 / 0.2);
+  --composer-shadow: rgb(51 81 118 / 0.16);
+  --sheen-x: 50%;
+  --sheen-y: 0%;
+  position: relative;
+  padding: 22px 18px 16px 24px;
+  border: 1px solid var(--composer-line);
+  border-radius: 26px;
+  background: var(--composer-glass);
+  backdrop-filter: blur(26px) saturate(150%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.18),
+    0 24px 70px var(--composer-shadow);
+  transition:
+    border-color 250ms ease,
+    box-shadow 350ms ease;
+}
+
+:global(.dark) .card {
+  --composer-glass: rgb(32 32 36 / 0.62);
+  --composer-line: rgb(214 228 255 / 0.16);
+  --composer-shadow: rgb(0 0 0 / 0.5);
+}
+
+.card:focus-within {
+  border-color: color-mix(in srgb, var(--brand) 52%, var(--composer-line));
+  box-shadow:
+    0 0 0 5px color-mix(in srgb, var(--brand) 10%, transparent),
+    0 24px 70px var(--composer-shadow);
+}
+
+.card::before {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    420px circle at var(--sheen-x) var(--sheen-y),
+    rgb(255 255 255 / 0.1),
+    transparent 55%
+  );
+  pointer-events: none;
+  content: "";
+}
+
+.input,
+.placeholder {
+  font-size: 1rem;
+  line-height: 1.55;
+  letter-spacing: 0.005em;
+}
+
+.input {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  max-height: 180px;
+  resize: none;
+  field-sizing: content;
+  background: transparent;
+  outline: none;
+}
+
+.placeholder {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: var(--brand);
+  animation: blink 1s steps(1) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.attach,
+.send {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  cursor: pointer;
+}
+
+.attach {
+  border-radius: 10px;
+  color: var(--muted-foreground);
+  transition:
+    background-color 200ms,
+    color 200ms;
+}
+
+.attach:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+.send {
+  --send-glow: rgb(95 178 242 / 0.42);
+  border-radius: 50%;
+  background: linear-gradient(160deg, #e8f6ff, #a9dcff 48%, #5fb2f2);
+  color: #06233a;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.55),
+    0 4px 16px var(--send-glow);
+  transition:
+    transform 250ms ease,
+    filter 200ms;
+}
+
+.send:enabled {
+  animation: ready 2.4s ease-in-out infinite;
+}
+
+.send:enabled:hover {
+  transform: scale(1.07);
+}
+
+.send:disabled {
+  cursor: not-allowed;
+  filter: saturate(0.35) brightness(0.8);
+  opacity: 0.7;
+}
+
+@keyframes ready {
+  50% {
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.55),
+      0 4px 26px var(--send-glow);
+  }
+}
+
+.attach:focus-visible,
+.send:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 3px;
+}
+
+.hint {
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.hint kbd {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--card);
+  color: var(--foreground);
+  font-family: inherit;
+  font-size: 0.6875rem;
+}
+
+@media (max-width: 640px) {
+  .card {
+    padding: 18px 14px 14px 18px;
+    border-radius: 22px;
+  }
+
+  .hint {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card,
+  .attach,
+  .send {
+    transition: none;
+  }
+
+  .caret {
+    display: none;
+  }
+
+  .send:enabled {
+    animation: none;
+  }
+
+  .send:enabled:hover {
+    transform: none;
+  }
+}

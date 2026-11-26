@@ -1,17 +1,23 @@
 "use client";
 
 import { Suspense, useState } from "react";
-import { Paperclip, Send, Settings2 } from "lucide-react";
+import { Settings2, Zap } from "lucide-react";
 import type { AnalysisFilters } from "@luxalgo/journal-core";
 import { AiSettings } from "@/components/ai-settings";
 import { AiNotice } from "@/components/ai-notice";
 import { FileImport } from "@/components/file-import";
 import { FilterBar, useFilters } from "@/components/filter-bar";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { OptionSelect } from "@/components/ui/option-select";
+import PromptComposer from "@/components/ui/prompt-composer";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   AI_PROVIDERS,
   AI_PROVIDER_NAMES,
@@ -25,6 +31,16 @@ interface Exchange {
   question: string;
   answer: string;
 }
+
+const EXAMPLE_QUESTIONS = [
+  "What was my most expensive trading mistake?",
+  "Which setups were most profitable in this date range?",
+  "How does my win rate change by time of day?",
+  "Compare my average win with my average loss.",
+];
+
+const TOOL_TRIGGER =
+  "h-8 w-auto max-w-full rounded-[10px] border-border/70 bg-background/25 px-2.5 text-xs shadow-none";
 
 export default function AiPage() {
   return (
@@ -65,7 +81,7 @@ function AiView() {
           />
         </DialogContent>
       </Dialog>
-      <div className="mx-auto max-w-3xl p-4">
+      <div className="p-4 sm:p-6">
         <JournalChat
           key={JSON.stringify([timeZone, query, provider, connection?.baseUrl])}
           filters={values}
@@ -106,7 +122,6 @@ function JournalChat({
   const [modelOverride, setModelOverride] = useState<string>();
   const model = modelOverride ?? defaultModel;
   const models = [...new Set([defaultModel, ...(modelList?.models ?? [])].filter(Boolean))];
-  const [question, setQuestion] = useState("");
   const [pending, setPending] = useState("");
   const [history, setHistory] = useState<Exchange[]>([]);
   const [scope, setScope] = useState<string>();
@@ -117,7 +132,6 @@ function JournalChat({
   const send = (text: string) => {
     if (!text || busy || !canChat || !model) return;
     setPending(text);
-    setQuestion("");
     void run(
       () =>
         postJson<{ answer: string; scope: AiScope }>("/api/ai/ask", {
@@ -138,43 +152,37 @@ function JournalChat({
     );
   };
 
+  const hasConversation = history.length > 0 || Boolean(pending);
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Ask your journal</CardTitle>
-        <p className="text-xs text-muted-foreground">
-          Chat about trades in the selected accounts and date range, or attach a statement to
-          import. Changing filters starts a new chat.
-        </p>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex flex-wrap gap-2">
-          <OptionSelect
-            aria-label="Chat provider"
-            value={provider}
-            disabled={busy}
-            onValueChange={(value) => onProviderChange(value as AiProvider)}
+    <section aria-labelledby="journal-chat-heading" className="relative isolate">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 -z-10 mx-auto h-[36rem] max-w-[76rem] bg-[radial-gradient(35%_48%_at_35%_52%,rgb(95_178_242/0.2),transparent),radial-gradient(32%_45%_at_68%_55%,rgb(163_122_231/0.15),transparent)] dark:bg-[radial-gradient(35%_48%_at_35%_52%,rgb(95_178_242/0.16),transparent),radial-gradient(32%_45%_at_68%_55%,rgb(163_122_231/0.13),transparent)]"
+      />
+      <div className="mx-auto w-full max-w-[720px] space-y-4 pb-10 pt-6 sm:pt-10">
+        <header
+          className={
+            hasConversation
+              ? "space-y-1"
+              : "space-y-2 pb-3 pt-8 text-center sm:pt-[clamp(3.5rem,13vh,9rem)]"
+          }
+        >
+          <h2
+            id="journal-chat-heading"
+            className={
+              hasConversation
+                ? "text-lg font-semibold"
+                : "text-3xl font-semibold tracking-tight sm:text-4xl"
+            }
           >
-            {providers.map((id) => (
-              <option key={id} value={id}>
-                {AI_PROVIDER_NAMES[id]}
-              </option>
-            ))}
-          </OptionSelect>
-          <OptionSelect
-            aria-label="Chat model"
-            value={model}
-            disabled={busy || !models.length}
-            onValueChange={setModelOverride}
-          >
-            {!model && <option value="">Choose a model</option>}
-            {models.map((id) => (
-              <option key={id} value={id}>
-                {id}
-              </option>
-            ))}
-          </OptionSelect>
-        </div>
+            Ask your journal
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Chat about trades in the selected accounts and date range. Changing filters starts a new
+            chat.
+          </p>
+        </header>
         {!canChat && (
           <p className="text-xs text-muted-foreground">
             Configure a provider in AI settings to start chatting.
@@ -186,19 +194,19 @@ function JournalChat({
           </p>
         )}
         {scope && <p className="text-xs text-muted-foreground">{scope}</p>}
-        <div role="log" aria-label="Journal chat" className="space-y-3">
+        <div role="log" aria-label="Journal chat" className="space-y-4">
           {history.map(({ question, answer }, index) => (
             <div key={index} className="space-y-2">
-              <p className="ml-auto w-fit max-w-full whitespace-pre-wrap break-words rounded-lg bg-accent px-3 py-2 text-sm">
+              <p className="ml-auto w-fit max-w-full whitespace-pre-wrap break-words rounded-2xl bg-accent px-4 py-2.5 text-sm sm:max-w-[85%]">
                 {question}
               </p>
-              <p className="whitespace-pre-wrap break-words rounded-lg border px-3 py-2 text-sm leading-relaxed">
+              <p className="whitespace-pre-wrap break-words rounded-2xl border bg-card/70 px-4 py-3 text-sm leading-relaxed">
                 {answer}
               </p>
             </div>
           ))}
           {pending && (
-            <p className="ml-auto w-fit max-w-full whitespace-pre-wrap break-words rounded-lg bg-accent px-3 py-2 text-sm">
+            <p className="ml-auto w-fit max-w-full whitespace-pre-wrap break-words rounded-2xl bg-accent px-4 py-2.5 text-sm sm:max-w-[85%]">
               {pending}
             </p>
           )}
@@ -210,34 +218,51 @@ function JournalChat({
             {importResult}
           </p>
         )}
-        <form
-          className="flex items-center gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            send(question.trim());
-          }}
-        >
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            aria-label="Attach a trading statement"
-            title="Attach a trading statement"
-            onClick={() => setImportOpen(true)}
-          >
-            <Paperclip />
-          </Button>
-          <Input
-            aria-label="Message"
-            placeholder="Ask about your trades"
-            maxLength={10000}
-            value={question}
-            onChange={(event) => setQuestion(event.target.value)}
-          />
-          <Button type="submit" disabled={busy || !question.trim() || !canChat || !model}>
-            <Send /> Send
-          </Button>
-        </form>
+        <PromptComposer
+          prompts={EXAMPLE_QUESTIONS}
+          placeholder="Ask about your trades…"
+          maxLength={10000}
+          disabled={busy || !canChat || !model}
+          onSubmit={send}
+          onAttach={() => setImportOpen(true)}
+          controls={
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <OptionSelect
+                aria-label="Chat provider"
+                className={TOOL_TRIGGER}
+                value={provider}
+                disabled={busy}
+                onValueChange={(value) => onProviderChange(value as AiProvider)}
+              >
+                {providers.map((id) => (
+                  <option key={id} value={id}>
+                    {AI_PROVIDER_NAMES[id]}
+                  </option>
+                ))}
+              </OptionSelect>
+              <Select
+                value={model}
+                disabled={busy || !models.length}
+                onValueChange={setModelOverride}
+              >
+                <SelectTrigger
+                  aria-label="Chat model"
+                  className={`${TOOL_TRIGGER} sm:max-w-[18rem]`}
+                >
+                  <Zap className="size-3 shrink-0 text-brand" aria-hidden="true" />
+                  <SelectValue placeholder="Choose a model" />
+                </SelectTrigger>
+                <SelectContent side="top" align="start">
+                  {models.map((id) => (
+                    <SelectItem key={id} value={id}>
+                      {id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          }
+        />
         <Dialog open={importOpen} onOpenChange={setImportOpen}>
           <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl">
             <DialogTitle>Import a trading statement</DialogTitle>
@@ -253,7 +278,7 @@ function JournalChat({
             />
           </DialogContent>
         </Dialog>
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   );
 }
