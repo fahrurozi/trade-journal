@@ -39,7 +39,28 @@ it("signs spot requests, paginates by trade ID, and keeps distinct fills", async
   expect(new URL(String(request.mock.calls[1]?.[0])).searchParams.get("idLessThan")).toBe("2");
   expect(result).toMatchObject({ skipped: 1 });
   expect(result.trades).toHaveLength(101);
-  expect(result.trades[0]).toMatchObject({ quantity: 2, fee: 1, assetClass: "crypto" });
+  expect(result.trades[0]).toMatchObject({
+    quantity: 1.99,
+    reportedQuantity: 2,
+    fee: 1,
+    assetClass: "crypto",
+  });
+});
+
+it("adjusts the base balance for a Spot sell fee and leaves quote-fee quantities alone", async () => {
+  const request = vi.fn<typeof fetch>().mockResolvedValue(
+    Response.json({
+      code: "00000",
+      data: [
+        { ...fill, side: "sell", tradeId: "base" },
+        { ...fill, tradeId: "quote", feeDetail: { feeCoin: "USDT", totalFee: "-0.5" } },
+      ],
+    }),
+  );
+  const { trades } = await fetchBitgetHistory(credentials, undefined, request);
+  expect(trades[0]).toMatchObject({ side: "sell", quantity: 2.01, reportedQuantity: 2, fee: 1 });
+  expect(trades[1]).toMatchObject({ side: "buy", quantity: 2, fee: 0.5 });
+  expect(trades[1]).not.toHaveProperty("reportedQuantity");
 });
 
 it("keeps hedged futures closes on the correct position side", async () => {

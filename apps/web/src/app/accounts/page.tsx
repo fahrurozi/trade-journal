@@ -65,11 +65,24 @@ function Accounts() {
     setSyncing(id);
     try {
       const { sync: outcome } = await action<{
-        sync: { inserted: number; skipped: number; skippedReasons: string[] };
+        sync: {
+          inserted: number;
+          skipped: number;
+          skippedReasons: string[];
+          correctedSpotFills?: number;
+        };
       }>(id, { action: "sync" });
-      if (outcome.skipped > 0)
+      if (outcome.skipped > 0 || outcome.correctedSpotFills)
         alert(
-          `Sync finished with ${outcome.inserted} new fills. ${outcome.skipped} broker record(s) were skipped: ${outcome.skippedReasons.join(" ")}`,
+          [
+            `Sync finished with ${outcome.inserted} new fills.`,
+            outcome.correctedSpotFills &&
+              `${outcome.correctedSpotFills} Bitget Spot fill quantities corrected.`,
+            outcome.skipped > 0 &&
+              `${outcome.skipped} broker record(s) were skipped: ${outcome.skippedReasons.join(" ")}`,
+          ]
+            .filter(Boolean)
+            .join(" "),
         );
     } catch (error) {
       alert(error instanceof Error ? error.message : "Sync failed");

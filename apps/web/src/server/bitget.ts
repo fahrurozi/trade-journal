@@ -48,7 +48,9 @@ const DAY = 86_400_000;
 export const BITGET_HISTORY_MS = 90 * DAY;
 const PAGE_SIZE = 100;
 
-function normalizeFill(fill: Fill, spot: boolean, quote: string): Trade | null {
+type BitgetTrade = Trade & { reportedQuantity?: number };
+
+function normalizeFill(fill: Fill, spot: boolean, quote: string): BitgetTrade | null {
   if (typeof fill.symbol !== "string") return null;
   const symbol = fill.symbol.toUpperCase();
   if (!symbol.endsWith(quote) || symbol.length === quote.length) return null;
@@ -76,19 +78,28 @@ function normalizeFill(fill: Fill, spot: boolean, quote: string): Trade | null {
       ? [fill.feeDetail]
       : [];
   const base = symbol.slice(0, -quote.length);
+  let baseFee = 0;
   const fee = fees.reduce((sum, { feeCoin, totalFee }) => {
     const amount = -Number(totalFee);
     if (!Number.isFinite(amount)) return sum;
     if (feeCoin?.toUpperCase() === quote) return sum + amount;
-    if (feeCoin?.toUpperCase() === base) return sum + amount * price;
+    if (feeCoin?.toUpperCase() === base) {
+      baseFee += amount;
+      return sum + amount * price;
+    }
     return sum;
   }, 0);
 
+  // Spot fees paid in the base asset change the amount credited or debited.
+  // At the fill price, the quote-valued fee keeps net cost/proceeds unchanged.
+  const balanceQuantity = spot ? quantity + (side === "buy" ? -baseFee : baseFee) : quantity;
+  if (!Number.isFinite(balanceQuantity) || balanceQuantity <= 0) return null;
   return {
     symbol,
     side,
     price,
-    quantity,
+    quantity: balanceQuantity,
+    ...(balanceQuantity !== quantity ? { reportedQuantity: quantity } : {}),
     fee,
     positionEffect,
     positionSide,
@@ -121,7 +132,7 @@ export async function fetchBitgetHistory(
   );
   const interval = (spot ? 90 : 7) * DAY;
   const seen = new Set<string>();
-  const trades: Trade[] = [];
+  const trades: BitgetTrade[] = [];
   let skipped = 0;
   let previousRequest = 0;
   let useDnsFallback = false;

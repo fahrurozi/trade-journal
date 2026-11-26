@@ -8,7 +8,7 @@ export const nowIso = (): string => new Date().toISOString();
  * Content hash for execution dedup: the same fill inserts once per account.
  * Numbered copies of an identical fill hash apart; the first copy keeps the
  * plain hash, so fills stored before numbering existed still deduplicate. A
- * fill kept only in part hashes with the quantity the broker reported.
+ * quantity adjustment keeps the hash based on what the broker reported.
  */
 export const executionHash = (execution: {
   symbol: string;

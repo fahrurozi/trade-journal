@@ -283,13 +283,26 @@ function BitgetHistory({
     setSyncMessage("");
     try {
       const { sync } = await postJson<{
-        sync: { inserted: number; restoredHistoryFills?: number; skippedReasons: string[] };
+        sync: {
+          inserted: number;
+          restoredHistoryFills?: number;
+          correctedSpotFills?: number;
+          skippedReasons: string[];
+        };
       }>(`/api/accounts/${encodeURIComponent(accountId)}/actions`, {
         action: "sync",
         fullHistory: true,
       });
       setSyncMessage(
-        `Recent history synced. ${sync.inserted} new fills.${sync.restoredHistoryFills ? ` ${sync.restoredHistoryFills} partial fills restored.` : ""} ${sync.skippedReasons.join(" ")}`,
+        [
+          `Recent history synced. ${sync.inserted} new fills.`,
+          sync.restoredHistoryFills && `${sync.restoredHistoryFills} partial fills restored.`,
+          sync.correctedSpotFills &&
+            `${sync.correctedSpotFills} Bitget Spot fill quantities corrected.`,
+          ...sync.skippedReasons,
+        ]
+          .filter(Boolean)
+          .join(" "),
       );
     } catch (error) {
       setSyncFailed(true);

@@ -43,9 +43,9 @@ export const executionProblem = (row: unknown, source: ExecutionSource): string 
     return `${label}: invalid copy number for an identical fill.`;
   if (
     r.hashQuantity !== undefined &&
-    (source !== "sync" || !isFiniteNumber(r.hashQuantity) || r.hashQuantity <= r.quantity)
+    (source !== "sync" || !isFiniteNumber(r.hashQuantity) || r.hashQuantity <= 0)
   )
-    return `${label}: invalid reported quantity for a fill kept in part.`;
+    return `${label}: invalid reported quantity for a broker fill.`;
   const meta = r.importMetadata;
   const metaOk =
     !meta ||

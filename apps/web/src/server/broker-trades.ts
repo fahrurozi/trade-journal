@@ -23,7 +23,7 @@ const numberIdenticalFills = (rows: ImportedExecution[]): ImportedExecution[] =>
  * mapping so the same fill has the same content hash from either path.
  */
 export const brokerTradesToExecutions = (
-  trades: Trade[],
+  trades: (Trade & { reportedQuantity?: number })[],
 ): {
   timed: ImportedExecution[];
   untimed: number;
@@ -38,6 +38,7 @@ export const brokerTradesToExecutions = (
       symbol: trade.symbol,
       side: trade.side,
       quantity: trade.quantity,
+      ...(trade.reportedQuantity !== undefined ? { hashQuantity: trade.reportedQuantity } : {}),
       price: trade.price,
       fee: trade.fee ?? 0,
       executedAt: trade.executedAt!,

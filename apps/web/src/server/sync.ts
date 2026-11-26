@@ -7,7 +7,13 @@ import { executionHash, nowIso } from "./ids";
 import { brokerTradesToExecutions, untimedFillsReason } from "./broker-trades";
 import { expiredOptionCloses, keepWithinHistory, type SyncedFill } from "./broker-history";
 import { insertExecutions, type InsertResult } from "./executions";
-import { getImportTimeZone, getJournalDefaults, getMultipliers, setSetting } from "./settings";
+import {
+  getImportTimeZone,
+  getJournalDefaults,
+  getMultipliers,
+  getSetting,
+  setSetting,
+} from "./settings";
 import { requireValue } from "./api";
 import {
   assertIbkrSyncTimeZone,
@@ -46,6 +52,7 @@ export interface SyncOutcome extends InsertResult {
   positions: number;
   syncedAt: string;
   restoredHistoryFills?: number;
+  correctedSpotFills?: number;
 }
 
 export const syncAccount = async (
@@ -64,6 +71,10 @@ export const syncAccount = async (
   if (statementTimeZone !== undefined) assertIbkrSyncTimeZone(account, statementTimeZone);
 
   const credentials = decryptJson<Record<string, string>>(account.credentialsEnc);
+  const bitgetSpot =
+    account.broker === bitgetBroker.id && (credentials.market ?? "spot") === "spot";
+  const spotFeeReplayKey = bitgetSpot ? `bitget:spot-fee-replay:${accountId}` : null;
+  const replaySpotHistory = spotFeeReplayKey !== null && !getSetting(spotFeeReplayKey);
   // Brokers that page through trade history (Webull) only need recent fills
   // once history has landed; refetched fills dedupe by content hash.
   const hasSyncedFills = db
@@ -77,7 +88,10 @@ export const syncAccount = async (
       : undefined;
   const bitget =
     account.broker === bitgetBroker.id
-      ? await fetchBitgetHistory(credentials, fullHistory ? undefined : historySince)
+      ? await fetchBitgetHistory(
+          credentials,
+          fullHistory || replaySpotHistory ? undefined : historySince,
+        )
       : null;
   const connection = bitget
     ? null
@@ -131,6 +145,7 @@ export const syncAccount = async (
   let dropped = 0;
   let trimmed = 0;
   let restoredHistoryFills = 0;
+  let correctedSpotFills = 0;
   const withinHistory = (fills: ImportedExecution[]): ImportedExecution[] => {
     const stored = db.select().from(executions).where(eq(executions.accountId, accountId)).all();
     const storedByHash = new Map(stored.map((row) => [row.contentHash, row]));
@@ -139,7 +154,23 @@ export const syncAccount = async (
       const previous = storedByHash.get(executionHash(fill));
       if (!previous) return true;
       if (
+        bitgetSpot &&
+        fill.hashQuantity !== undefined &&
+        previous.source === "sync" &&
+        previous.quantity === fill.hashQuantity
+      ) {
+        // Only repair a matched fill still stored at its original quantity.
+        // The hash, execution ID, and recorded fee remain valid.
+        db.update(executions)
+          .set({ quantity: fill.quantity })
+          .where(eq(executions.id, previous.id))
+          .run();
+        correctedSpotFills++;
+        return false;
+      }
+      if (
         bitget &&
+        !bitgetSpot &&
         fullHistory &&
         previous.source === "sync" &&
         previous.quantity < fill.quantity
@@ -199,7 +230,7 @@ export const syncAccount = async (
       if (quantity < 1e-9) return [];
       // The kept part hashes as the broker's whole fill, so later syncs still match it.
       const fee = (fill.fee * quantity) / fill.quantity;
-      return [{ ...fill, quantity, fee, hashQuantity: fill.quantity }];
+      return [{ ...fill, quantity, fee, hashQuantity: fill.hashQuantity ?? fill.quantity }];
     });
   };
 
@@ -218,7 +249,8 @@ export const syncAccount = async (
       }
       // Validation, history provenance, deduplication and sync status commit together.
       const inserted = insertExecutions(accountId, withinHistory(timed), "sync");
-      if (restoredHistoryFills > 0 && inserted.inserted === 0) rebuildAccount(accountId);
+      if ((restoredHistoryFills > 0 || correctedSpotFills > 0) && inserted.inserted === 0)
+        rebuildAccount(accountId);
       if (account.broker === "webull") {
         const optionFills = db
           .select()
@@ -250,6 +282,7 @@ export const syncAccount = async (
         })
         .where(eq(accounts.id, accountId))
         .run();
+      if (spotFeeReplayKey && replaySpotHistory) setSetting(spotFeeReplayKey, syncedAt);
       return inserted;
     },
     { behavior: "immediate" },
@@ -288,5 +321,6 @@ export const syncAccount = async (
     positions: positions.length,
     syncedAt,
     ...(restoredHistoryFills > 0 ? { restoredHistoryFills } : {}),
+    ...(correctedSpotFills > 0 ? { correctedSpotFills } : {}),
   };
 };
