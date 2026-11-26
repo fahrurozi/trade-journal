@@ -66,13 +66,17 @@ interface PreviewResponse {
 
 export function FileImport({
   aiDefault = false,
+  bitgetAccountId,
   onImported,
 }: {
   aiDefault?: boolean;
+  bitgetAccountId?: string;
   onImported?: (message: string) => void;
 }) {
   const router = useRouter();
-  const [accountId, setAccountId] = useState("");
+  const [selectedAccountId, setAccountId] = useState("");
+  const accountId = bitgetAccountId ?? selectedAccountId;
+  const bitgetOptions = bitgetAccountId ? { accountId, bitgetHistory: true } : {};
   const [reviewOptions, setReviewOptions] = useState<ImportReviewOptions>({});
   const changeReview = (options: ImportReviewOptions) => {
     setReviewOptions(options);
@@ -149,6 +153,9 @@ export function FileImport({
     setError(null);
     setBusy(true);
     try {
+      if (bitgetAccountId && !/\.(csv|tsv)$/i.test(file.name)) {
+        throw new Error("Choose a Bitget CSV export.");
+      }
       const pdf = /\.pdf$/i.test(file.name);
       const xlsx = /\.xlsx$/i.test(file.name);
       if (pdf && !aiEnabled) throw new Error("Enable AI parsing to upload a PDF statement.");
@@ -194,6 +201,7 @@ export function FileImport({
           fileName: file.name,
           timeZone,
           ...(fileEncoding === "xlsx" ? { encoding: fileEncoding } : {}),
+          ...bitgetOptions,
         }),
       );
     } catch (cause) {
@@ -221,6 +229,7 @@ export function FileImport({
           timeZone,
           encoding,
           ...(aiEnabled ? { ai: aiOptions } : {}),
+          ...bitgetOptions,
         }),
       );
     } catch (cause) {
@@ -241,6 +250,7 @@ export function FileImport({
           content,
           mapping,
           timeZone,
+          ...bitgetOptions,
         }),
       );
       setMappingApplied(true);
@@ -280,6 +290,7 @@ export function FileImport({
               aiReviewed,
             }
           : {}),
+        ...bitgetOptions,
       });
       const skippedNote =
         result.skipped && result.skipped > 0
@@ -305,24 +316,28 @@ export function FileImport({
     <div className="space-y-3">
       <Card>
         <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 space-y-0">
-          <CardTitle>Upload a statement or export</CardTitle>
-          <AiImportOptions
-            enabled={aiEnabled}
-            onEnabledChange={(enabled) => {
-              setAiEnabled(enabled);
-              invalidateAiPreview();
-              setContent(null);
-              setFileName("");
-              setMappingApplied(false);
-            }}
-            value={aiOptions}
-            onChange={(options) => {
-              setAiOptions(options);
-              invalidateAiPreview();
-            }}
-            settings={settingsData ?? undefined}
-            disabled={busy}
-          />
+          <CardTitle>
+            {bitgetAccountId ? "Upload Bitget history" : "Upload a statement or export"}
+          </CardTitle>
+          {!bitgetAccountId && (
+            <AiImportOptions
+              enabled={aiEnabled}
+              onEnabledChange={(enabled) => {
+                setAiEnabled(enabled);
+                invalidateAiPreview();
+                setContent(null);
+                setFileName("");
+                setMappingApplied(false);
+              }}
+              value={aiOptions}
+              onChange={(options) => {
+                setAiOptions(options);
+                invalidateAiPreview();
+              }}
+              settings={settingsData ?? undefined}
+              disabled={busy}
+            />
+          )}
         </CardHeader>
         <CardContent className="space-y-3">
           <div>
@@ -364,12 +379,16 @@ export function FileImport({
             <FileUp className="h-6 w-6 text-muted-foreground" />
             <span className="text-sm">
               {fileName ||
-                (aiEnabled
-                  ? "Choose a statement for AI parsing"
-                  : "Choose a CSV / HTML / XML statement or an XTB Excel report")}
+                (bitgetAccountId
+                  ? "Choose a Bitget CSV export"
+                  : aiEnabled
+                    ? "Choose a statement for AI parsing"
+                    : "Choose a CSV / HTML / XML statement or an XTB Excel report")}
             </span>
             <span className="text-xs text-muted-foreground">
-              {aiEnabled ? (
+              {bitgetAccountId ? (
+                "Use a fill or order history export for the same Bitget market."
+              ) : aiEnabled ? (
                 "CSV, TSV, HTML, XML, TXT or PDF. Your file stays local until you preview with AI."
               ) : (
                 <>
@@ -387,9 +406,11 @@ export function FileImport({
             <input
               type="file"
               accept={
-                aiEnabled
-                  ? ".csv,.txt,.htm,.html,.tsv,.xml,.pdf"
-                  : ".csv,.txt,.htm,.html,.tsv,.xml,.xlsx"
+                bitgetAccountId
+                  ? ".csv,.tsv"
+                  : aiEnabled
+                    ? ".csv,.txt,.htm,.html,.tsv,.xml,.pdf"
+                    : ".csv,.txt,.htm,.html,.tsv,.xml,.xlsx"
               }
               disabled={busy || !settingsData || !validTimeZone}
               className="hidden"
@@ -613,19 +634,21 @@ export function FileImport({
                     {message}
                   </p>
                 ))}
-              <fieldset disabled={busy}>
-                <AccountPicker
-                  value={accountId}
-                  onChange={(id) => {
-                    setAccountId(id);
-                    setReviewOptions({});
-                    setPreview((current) =>
-                      current ? { ...current, reconciliation: undefined } : null,
-                    );
-                  }}
-                  kind="import"
-                />
-              </fieldset>
+              {!bitgetAccountId && (
+                <fieldset disabled={busy}>
+                  <AccountPicker
+                    value={accountId}
+                    onChange={(id) => {
+                      setAccountId(id);
+                      setReviewOptions({});
+                      setPreview((current) =>
+                        current ? { ...current, reconciliation: undefined } : null,
+                      );
+                    }}
+                    kind="import"
+                  />
+                </fieldset>
+              )}
               {preview.detected === "ninjatrader" && accountId && (
                 <ImportReconciliation
                   review={preview.reconciliation}

@@ -45,6 +45,7 @@ interface Fill {
 }
 
 const DAY = 86_400_000;
+export const BITGET_HISTORY_MS = 90 * DAY;
 const PAGE_SIZE = 100;
 
 function normalizeFill(fill: Fill, spot: boolean, quote: string): Trade | null {
@@ -114,7 +115,10 @@ export async function fetchBitgetHistory(
   const quote = market === "USDC-FUTURES" ? "USDC" : "USDT";
   const path = spot ? "/api/v2/spot/trade/fills" : "/api/v2/mix/order/fill-history";
   const now = Date.now();
-  const start = Math.max(now - 90 * DAY + 60000, historySince ? Date.parse(historySince) : 0);
+  const start = Math.max(
+    now - BITGET_HISTORY_MS + 60000,
+    historySince ? Date.parse(historySince) : 0,
+  );
   const interval = (spot ? 90 : 7) * DAY;
   const seen = new Set<string>();
   const trades: Trade[] = [];

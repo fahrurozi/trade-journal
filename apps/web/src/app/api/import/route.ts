@@ -21,6 +21,11 @@ import {
 } from "@/server/ibkr-flex-xml-import";
 import { reconcileXtbHoldings, xlsxStatement } from "@/server/xtb-import";
 import { reconcileHyperliquidSync } from "@/server/hyperliquid-import";
+import {
+  bitgetHistoryAccount,
+  parseBitgetCsv,
+  reconcileBitgetHistory,
+} from "@/server/bitget-history-import";
 import type { AiImportOptions } from "@/lib/ai-import";
 import {
   createAiImportPreview,
@@ -42,6 +47,7 @@ interface ImportBody {
   encoding?: "text" | "pdf" | "xlsx";
   aiPreviewToken?: string;
   aiReviewed?: boolean;
+  bitgetHistory?: boolean;
 }
 
 /**
@@ -70,6 +76,12 @@ export const POST = handler(async (request: Request) => {
     "Turn off AI parsing for an XTB Excel report. The XTB importer reads it directly.",
   );
   requireValue(!body.ai || !body.mapping, "Choose AI parsing or column mapping, not both.");
+  const bitgetAccount = body.bitgetHistory === true ? bitgetHistoryAccount(body.accountId) : null;
+  if (bitgetAccount)
+    requireValue(
+      !body.ai && (!body.encoding || body.encoding === "text"),
+      "Upload a Bitget history CSV.",
+    );
   // Workbooks are reduced to a statement here, so preview and commit parse the same server-side text.
   const content = body.encoding === "xlsx" ? await xlsxStatement(body.content) : body.content;
   const statement = {
@@ -91,9 +103,11 @@ export const POST = handler(async (request: Request) => {
       : readAiImportPreview(statement, body.aiPreviewToken!)
     : body.mapping
       ? parseWithMapping(content, body.mapping, { timeZone })
-      : looksLikeFlexXml(content)
-        ? parseFlexXmlImport(content, timeZone)
-        : parseAuto(content, { timeZone, fileName: body.fileName, symbol: body.symbol });
+      : bitgetAccount
+        ? parseBitgetCsv(content, timeZone)
+        : looksLikeFlexXml(content)
+          ? parseFlexXmlImport(content, timeZone)
+          : parseAuto(content, { timeZone, fileName: body.fileName, symbol: body.symbol });
 
   if (!parsed) {
     return ok({
@@ -118,12 +132,15 @@ export const POST = handler(async (request: Request) => {
       : null;
   // The preview then counts only the fills that will be saved.
   if (hyperliquid) parsed.executions = hyperliquid.executions;
+  const bitget = bitgetAccount ? reconcileBitgetHistory(bitgetAccount, parsed.executions) : null;
+  if (bitget) parsed.executions = bitget.executions;
   const problems = [syncProblem, xtb?.problem, hyperliquid?.problem].filter(
     (problem): problem is string => !!problem,
   );
   const errors = [...(parsed.errors ?? []), ...problems];
   const warnings = [
     ...(parsed.warnings ?? []),
+    ...(bitget?.warnings ?? []),
     ...(xtb?.matched
       ? [`${xtb.matched} open holding(s) imported earlier are closed by this file.`]
       : []),
@@ -181,10 +198,11 @@ export const POST = handler(async (request: Request) => {
           xtb?.executions ?? (parsed.executions as ImportedExecution[]),
           "import",
           undefined,
-          { preserveFees: Boolean(body.ai) },
+          { preserveFees: Boolean(body.ai || bitget) },
         );
   if (xtb?.matched) result.duplicates += xtb.matched;
   if (hyperliquid?.covered) result.duplicates += hyperliquid.covered;
+  if (bitget?.covered) result.duplicates += bitget.covered;
   // Invalid rows are skipped with a warning rather than failing the whole file.
   const commitWarnings = [
     ...warnings,

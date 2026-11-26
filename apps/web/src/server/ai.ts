@@ -43,6 +43,7 @@ export const runAi = async (
   prompt: string,
   maxOutputTokens = 1200,
   selection?: { provider: AiProvider; model: string },
+  options?: { system: string; signal: AbortSignal },
 ): Promise<string> => {
   const provider = selection?.provider ?? getAiProvider();
   if (!aiProviderConfigured(provider)) {
@@ -52,17 +53,22 @@ export const runAi = async (
         : `AI is not configured — add your ${AI_PROVIDER_NAMES[provider]} API key in Settings.`,
     );
   }
+  const timeout = options && AbortSignal.timeout(75000);
   try {
     const result = await generateText({
       model: languageModel(provider, getAiKey(provider), selection?.model ?? getAiModel(provider)),
       ...(provider === "openai" ? { providerOptions: { openai: { store: false } } } : {}),
-      system: SYSTEM,
+      system: options?.system ?? SYSTEM,
       prompt,
       maxOutputTokens,
+      ...(options && timeout ? { abortSignal: AbortSignal.any([options.signal, timeout]) } : {}),
     });
-    if (!result.text.trim()) throw new Error("AI returned no text. Check the model or try again.");
-    return result.text;
+    if (result.text.trim()) return result.text;
+    throw new EmptyAiAnswer(result.finishReason === "length");
   } catch (error) {
+    if (timeout?.aborted)
+      throw new Error("AI request timed out. Try again or choose a faster model.");
+    if (error instanceof EmptyAiAnswer) throw error;
     if (RetryError.isInstance(error)) error = error.lastError;
     // Provider error messages can contain key fragments or request data. Never relay them.
     if (APICallError.isInstance(error)) {
@@ -71,6 +77,7 @@ export const runAi = async (
           "AI authentication_error: check your provider key and permissions in Settings.",
         );
       if (
+        error.statusCode === 402 ||
         /credit balance|billing|insufficient_quota|exceeded your current quota/i.test(error.message)
       )
         throw new Error("AI billing: check your provider account's credits and quota.");
@@ -88,7 +95,19 @@ export const runAi = async (
         throw new Error(
           "AI server unreachable: check the server URL in Settings and that the server is running.",
         );
+      if (options && error.statusCode && error.statusCode >= 500)
+        throw new Error("AI provider temporarily unavailable. Try again shortly.");
     }
     throw new Error("AI request failed. Check your provider settings or try again shortly.");
   }
 };
+
+class EmptyAiAnswer extends Error {
+  constructor(lengthLimited: boolean) {
+    super(
+      lengthLimited
+        ? "AI ran out of output tokens before it could answer. Try a shorter question or another model."
+        : "AI returned no answer. Try again or choose another model.",
+    );
+  }
+}

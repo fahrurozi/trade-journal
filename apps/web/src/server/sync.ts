@@ -7,7 +7,7 @@ import { executionHash, nowIso } from "./ids";
 import { brokerTradesToExecutions, untimedFillsReason } from "./broker-trades";
 import { expiredOptionCloses, keepWithinHistory, type SyncedFill } from "./broker-history";
 import { insertExecutions, type InsertResult } from "./executions";
-import { getImportTimeZone, getMultipliers, setSetting } from "./settings";
+import { getImportTimeZone, getJournalDefaults, getMultipliers, setSetting } from "./settings";
 import { requireValue } from "./api";
 import {
   assertIbkrSyncTimeZone,
@@ -15,6 +15,8 @@ import {
   isIbkrSyncAccount,
 } from "./ibkr-sync-timezone";
 import { withoutSummaryRows } from "./ibkr-flex-xml-import";
+import { rebuildAccount } from "./rebuild";
+import { defaultFee } from "@/lib/journal-defaults";
 
 import { bitgetBroker, fetchBitgetHistory } from "./bitget";
 
@@ -43,9 +45,13 @@ export interface SyncOutcome extends InsertResult {
   equity: number | null;
   positions: number;
   syncedAt: string;
+  restoredHistoryFills?: number;
 }
 
-export const syncAccount = async (accountId: string): Promise<SyncOutcome> => {
+export const syncAccount = async (
+  accountId: string,
+  { fullHistory = false }: { fullHistory?: boolean } = {},
+): Promise<SyncOutcome> => {
   const account = db.select().from(accounts).where(eq(accounts.id, accountId)).get();
   if (!account) throw new Error("Account not found");
   if (account.kind !== "sync" || !account.credentialsEnc) {
@@ -70,7 +76,9 @@ export const syncAccount = async (accountId: string): Promise<SyncOutcome> => {
       ? new Date(Date.parse(account.lastSyncAt) - HISTORY_OVERLAP_MS).toISOString()
       : undefined;
   const bitget =
-    account.broker === bitgetBroker.id ? await fetchBitgetHistory(credentials, historySince) : null;
+    account.broker === bitgetBroker.id
+      ? await fetchBitgetHistory(credentials, fullHistory ? undefined : historySince)
+      : null;
   const connection = bitget
     ? null
     : connect({
@@ -122,18 +130,36 @@ export const syncAccount = async (accountId: string): Promise<SyncOutcome> => {
     checked && !delivered(symbol) ? (brokerQuantities.get(symbol) ?? 0) : undefined;
   let dropped = 0;
   let trimmed = 0;
+  let restoredHistoryFills = 0;
   const withinHistory = (fills: ImportedExecution[]): ImportedExecution[] => {
     const stored = db.select().from(executions).where(eq(executions.accountId, accountId)).all();
-    const storedHashes = new Set(stored.map((row) => row.contentHash));
-    const fresh = fills.filter((fill) => !storedHashes.has(executionHash(fill)));
+    const storedByHash = new Map(stored.map((row) => [row.contentHash, row]));
+    const partials = new Map<ImportedExecution, (typeof stored)[number]>();
+    const fresh = fills.filter((fill) => {
+      const previous = storedByHash.get(executionHash(fill));
+      if (!previous) return true;
+      if (
+        bitget &&
+        fullHistory &&
+        previous.source === "sync" &&
+        previous.quantity < fill.quantity
+      ) {
+        partials.set(fill, previous);
+        return true;
+      }
+      return false;
+    });
+    const partialIds = new Set([...partials.values()].map((row) => row.id));
     const groupOf = (json: string | null) =>
       json ? (JSON.parse(json) as { group?: string }).group : undefined;
     const keep = keepWithinHistory(
-      stored.map((row) => ({
-        ...row,
-        side: row.side as "buy" | "sell",
-        group: groupOf(row.importMetadataJson),
-      })),
+      stored
+        .filter((row) => !partialIds.has(row.id))
+        .map((row) => ({
+          ...row,
+          side: row.side as "buy" | "sell",
+          group: groupOf(row.importMetadataJson),
+        })),
       fresh.map((fill) => ({
         ...fill,
         group: fill.importMetadata?.group,
@@ -143,11 +169,32 @@ export const syncAccount = async (accountId: string): Promise<SyncOutcome> => {
       checked,
     );
     const kept = new Map([...keep].map(([index, quantity]) => [fresh[index]!, quantity]));
-    dropped = [...keep.values()].filter((quantity) => quantity < 1e-9).length;
-    trimmed = keep.size - dropped;
+    dropped = [...kept].filter(([fill, quantity]) => quantity < 1e-9 && !partials.has(fill)).length;
+    trimmed = [...kept].filter(
+      ([fill, quantity]) => quantity >= 1e-9 && !partials.has(fill),
+    ).length;
     // Repeats of stored fills go through, so the insert counts them as duplicates.
     return fills.flatMap((fill) => {
       const quantity = kept.get(fill);
+      const previous = partials.get(fill);
+      if (previous) {
+        const restored = quantity ?? fill.quantity;
+        if (restored > previous.quantity + 1e-9) {
+          const fee = defaultFee(
+            (fill.fee * restored) / fill.quantity,
+            restored,
+            accountId,
+            fill.symbol,
+            getJournalDefaults(),
+          );
+          db.update(executions)
+            .set({ quantity: restored, fee })
+            .where(eq(executions.id, previous.id))
+            .run();
+          restoredHistoryFills++;
+        }
+        return [];
+      }
       if (quantity === undefined) return [fill];
       if (quantity < 1e-9) return [];
       // The kept part hashes as the broker's whole fill, so later syncs still match it.
@@ -171,6 +218,7 @@ export const syncAccount = async (accountId: string): Promise<SyncOutcome> => {
       }
       // Validation, history provenance, deduplication and sync status commit together.
       const inserted = insertExecutions(accountId, withinHistory(timed), "sync");
+      if (restoredHistoryFills > 0 && inserted.inserted === 0) rebuildAccount(accountId);
       if (account.broker === "webull") {
         const optionFills = db
           .select()
@@ -233,5 +281,12 @@ export const syncAccount = async (accountId: string): Promise<SyncOutcome> => {
       result.skippedReasons.push(untimedFillsReason(untimed, statementTimeZone !== undefined));
   }
 
-  return { accountId, ...result, equity, positions: positions.length, syncedAt };
+  return {
+    accountId,
+    ...result,
+    equity,
+    positions: positions.length,
+    syncedAt,
+    ...(restoredHistoryFills > 0 ? { restoredHistoryFills } : {}),
+  };
 };

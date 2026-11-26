@@ -1,6 +1,6 @@
 "use client";
 
-import { type PointerEvent, type ReactNode, useEffect, useState } from "react";
+import { type PointerEvent, type ReactNode, useEffect, useId, useState } from "react";
 import { ArrowUp, Paperclip } from "lucide-react";
 import styles from "./prompt-composer.module.css";
 
@@ -10,6 +10,7 @@ interface PromptComposerProps {
   controls: ReactNode;
   maxLength: number;
   disabled: boolean;
+  allowCommand?: (prompt: string) => boolean;
   onSubmit: (prompt: string) => void;
   onAttach: () => void;
 }
@@ -71,7 +72,7 @@ function useAnimatedPrompt(prompts: readonly string[], active: boolean) {
   return typed;
 }
 
-function moveSheen(event: PointerEvent<HTMLFormElement>) {
+function moveSheen(event: PointerEvent<HTMLDivElement>) {
   if (event.pointerType !== "mouse") return;
   const card = event.currentTarget;
   const bounds = card.getBoundingClientRect();
@@ -85,6 +86,7 @@ export default function PromptComposer({
   controls,
   maxLength,
   disabled,
+  allowCommand,
   onSubmit,
   onAttach,
 }: PromptComposerProps) {
@@ -93,21 +95,23 @@ export default function PromptComposer({
   const animate = !draft && !focused;
   const typed = useAnimatedPrompt(prompts, animate);
   const prompt = draft.trim();
+  const formId = useId();
+  const canSend = Boolean(prompt && (!disabled || allowCommand?.(prompt)));
 
   return (
     <div className="space-y-3">
-      <form
-        className={styles.card}
-        aria-label="Compose a journal message"
-        onPointerMove={moveSheen}
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!prompt || disabled) return;
-          onSubmit(prompt);
-          setDraft("");
-        }}
-      >
-        <div className="relative">
+      <div className={styles.card} onPointerMove={moveSheen}>
+        <form
+          id={formId}
+          className="relative"
+          aria-label="Compose a journal message"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!canSend) return;
+            onSubmit(prompt);
+            setDraft("");
+          }}
+        >
           <textarea
             aria-label="Message"
             className={styles.input}
@@ -129,7 +133,7 @@ export default function PromptComposer({
               {animate && typed !== null && <i className={styles.caret} />}
             </span>
           )}
-        </div>
+        </form>
         <div className="relative mt-4 flex flex-wrap items-center justify-between gap-2 sm:mt-5">
           {controls}
           <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -144,15 +148,16 @@ export default function PromptComposer({
             </button>
             <button
               type="submit"
+              form={formId}
               className={styles.send}
               aria-label="Send message"
-              disabled={disabled || !prompt}
+              disabled={!canSend}
             >
               <ArrowUp className="size-[18px]" strokeWidth={2.5} aria-hidden="true" />
             </button>
           </div>
         </div>
-      </form>
+      </div>
       <p className={styles.hint}>
         <kbd>Enter</kbd> to send <span aria-hidden="true">/</span> <kbd>Shift</kbd> +{" "}
         <kbd>Enter</kbd> for a new line

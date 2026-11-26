@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { Settings2, Zap } from "lucide-react";
 import type { AnalysisFilters } from "@luxalgo/journal-core";
 import { AiSettings } from "@/components/ai-settings";
@@ -33,14 +33,15 @@ interface Exchange {
 }
 
 const EXAMPLE_QUESTIONS = [
-  "What was my most expensive trading mistake?",
-  "Which setups were most profitable in this date range?",
-  "How does my win rate change by time of day?",
+  "How do I import my first trade?",
+  "How do I use the Daily journal?",
+  "What does profit factor mean?",
   "Compare my average win with my average loss.",
 ];
 
 const TOOL_TRIGGER =
   "h-8 w-auto max-w-full rounded-[10px] border-border/70 bg-background/25 px-2.5 text-xs shadow-none";
+const isClearCommand = (text: string) => text.toLowerCase() === "/clear";
 
 export default function AiPage() {
   return (
@@ -58,7 +59,7 @@ function AiView() {
   const provider = providerOverride ?? settings?.aiProvider ?? "compatible";
   const connection = settings?.aiConnections[provider];
   return (
-    <>
+    <div className="flex h-[calc(100dvh-var(--journal-header-offset))] min-h-[28rem] flex-col">
       <FilterBar
         title="AI"
         actions={
@@ -81,7 +82,7 @@ function AiView() {
           />
         </DialogContent>
       </Dialog>
-      <div className="p-4 sm:p-6">
+      <div className="flex min-h-0 flex-1 flex-col">
         <JournalChat
           key={JSON.stringify([timeZone, query, provider, connection?.baseUrl])}
           filters={values}
@@ -95,7 +96,7 @@ function AiView() {
           canChat={Boolean(connection?.configured)}
         />
       </div>
-    </>
+    </div>
   );
 }
 
@@ -127,23 +128,41 @@ function JournalChat({
   const [scope, setScope] = useState<string>();
   const [importOpen, setImportOpen] = useState(false);
   const [importResult, setImportResult] = useState("");
-  const { run, busy, error, dismiss } = useAiRequest();
+  const { run, busy, error, reset, dismiss } = useAiRequest();
+  const transcript = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const element = transcript.current;
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [history.length, pending, busy, error]);
 
   const send = (text: string) => {
+    if (isClearCommand(text)) {
+      reset();
+      setPending("");
+      setHistory([]);
+      setScope(undefined);
+      return;
+    }
     if (!text || busy || !canChat || !model) return;
     setPending(text);
     void run(
-      () =>
-        postJson<{ answer: string; scope: AiScope }>("/api/ai/ask", {
-          question: text,
-          filters,
-          timeZone,
-          modelSelection: { provider, model },
-          history: history.slice(-4).map(({ question, answer }) => ({
-            question: question.slice(0, 2000),
-            answer: answer.slice(0, 3000),
-          })),
-        }),
+      (signal) =>
+        postJson<{ answer: string; scope: AiScope }>(
+          "/api/ai/ask",
+          {
+            question: text,
+            filters,
+            timeZone,
+            modelSelection: { provider, model },
+            history: history.slice(-4).map(({ question, answer }) => ({
+              question: question.slice(0, 2000),
+              answer: answer.slice(0, 3000),
+            })),
+          },
+          "POST",
+          signal,
+        ),
       ({ answer, scope }) => {
         setScope(scope.label);
         setHistory((current) => [...current, { question: text, answer }]);
@@ -155,32 +174,27 @@ function JournalChat({
   const hasConversation = history.length > 0 || Boolean(pending);
 
   return (
-    <section aria-labelledby="journal-chat-heading" className="relative isolate">
+    <section
+      aria-labelledby="journal-chat-heading"
+      data-chat-state={hasConversation ? "active" : "empty"}
+      className="relative isolate flex min-h-0 flex-1 flex-col"
+    >
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-0 -z-10 mx-auto h-[36rem] max-w-[76rem] bg-[radial-gradient(35%_48%_at_35%_52%,rgb(95_178_242/0.2),transparent),radial-gradient(32%_45%_at_68%_55%,rgb(163_122_231/0.15),transparent)] dark:bg-[radial-gradient(35%_48%_at_35%_52%,rgb(95_178_242/0.16),transparent),radial-gradient(32%_45%_at_68%_55%,rgb(163_122_231/0.13),transparent)]"
+        className="pointer-events-none absolute inset-0 -z-10 mx-auto max-w-[76rem] bg-[radial-gradient(35%_48%_at_35%_52%,rgb(95_178_242/0.2),transparent),radial-gradient(32%_45%_at_68%_55%,rgb(163_122_231/0.15),transparent)] dark:bg-[radial-gradient(35%_48%_at_35%_52%,rgb(95_178_242/0.16),transparent),radial-gradient(32%_45%_at_68%_55%,rgb(163_122_231/0.13),transparent)]"
       />
-      <div className="mx-auto w-full max-w-[720px] space-y-4 pb-10 pt-6 sm:pt-10">
-        <header
-          className={
-            hasConversation
-              ? "space-y-1"
-              : "space-y-2 pb-3 pt-8 text-center sm:pt-[clamp(3.5rem,13vh,9rem)]"
-          }
-        >
+      <div
+        className={`mx-auto flex min-h-0 w-full max-w-[768px] flex-1 flex-col gap-4 px-4 py-4 sm:px-6 ${hasConversation ? "" : "justify-center overflow-y-auto"}`}
+      >
+        <header className={hasConversation ? "sr-only" : "space-y-2 text-center"}>
           <h2
             id="journal-chat-heading"
-            className={
-              hasConversation
-                ? "text-lg font-semibold"
-                : "text-3xl font-semibold tracking-tight sm:text-4xl"
-            }
+            className="text-3xl font-semibold tracking-tight sm:text-4xl"
           >
             Ask your journal
           </h2>
           <p className="text-sm text-muted-foreground">
-            Chat about trades in the selected accounts and date range. Changing filters starts a new
-            chat.
+            Ask about your trades or get help using Trade Journal.
           </p>
         </header>
         {!canChat && (
@@ -193,8 +207,13 @@ function JournalChat({
             {modelError} You can use the saved model.
           </p>
         )}
-        {scope && <p className="text-xs text-muted-foreground">{scope}</p>}
-        <div role="log" aria-label="Journal chat" className="space-y-4">
+        {scope && <p className="shrink-0 text-xs text-muted-foreground">{scope}</p>}
+        <div
+          ref={transcript}
+          role="log"
+          aria-label="Journal chat"
+          className={hasConversation ? "min-h-0 flex-1 space-y-4 overflow-y-auto pb-2" : "sr-only"}
+        >
           {history.map(({ question, answer }, index) => (
             <div key={index} className="space-y-2">
               <p className="ml-auto w-fit max-w-full whitespace-pre-wrap break-words rounded-2xl bg-accent px-4 py-2.5 text-sm sm:max-w-[85%]">
@@ -210,9 +229,21 @@ function JournalChat({
               {pending}
             </p>
           )}
-          {busy && <p className="text-xs text-muted-foreground">Thinking…</p>}
+          {busy && (
+            <div role="status" className="w-fit space-y-1">
+              <div
+                aria-hidden="true"
+                className="flex items-center gap-1.5 rounded-2xl border bg-card px-4 py-3 text-muted-foreground"
+              >
+                <i className="size-1.5 rounded-full bg-current motion-safe:animate-bounce" />
+                <i className="size-1.5 rounded-full bg-current motion-safe:animate-bounce [animation-delay:120ms]" />
+                <i className="size-1.5 rounded-full bg-current motion-safe:animate-bounce [animation-delay:240ms]" />
+              </div>
+              <p className="text-right text-xs text-muted-foreground">Thinking…</p>
+            </div>
+          )}
+          {error && <AiNotice error={error} onRetry={() => send(pending)} onDismiss={dismiss} />}
         </div>
-        {error && <AiNotice error={error} onRetry={() => send(pending)} onDismiss={dismiss} />}
         {importResult && (
           <p role="status" className="text-sm">
             {importResult}
@@ -220,9 +251,10 @@ function JournalChat({
         )}
         <PromptComposer
           prompts={EXAMPLE_QUESTIONS}
-          placeholder="Ask about your trades…"
+          placeholder="Ask a question or type /clear"
           maxLength={10000}
           disabled={busy || !canChat || !model}
+          allowCommand={isClearCommand}
           onSubmit={send}
           onAttach={() => setImportOpen(true)}
           controls={

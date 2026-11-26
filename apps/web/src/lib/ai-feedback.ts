@@ -109,7 +109,25 @@ export function aiFeedback(message: string): AiFeedback {
       tone: "info",
       action: { label: "Sign in", href: "/login" },
     };
-  if (/failed to fetch|network|timeout|timed out|connection/i.test(message))
+  if (/AI ran out of output tokens|AI returned no answer/i.test(message))
+    return {
+      title: "The model didn’t return an answer",
+      description: "Try a shorter question or select another model.",
+      tone: "error",
+      retry: true,
+    };
+  if (
+    /AI request timed out|AI provider temporarily unavailable|Unexpected server response \(HTTP (?:502|503|504)\)/i.test(
+      message,
+    )
+  )
+    return {
+      title: "The AI request took too long or the server is unavailable",
+      description: "Try again or choose a faster model.",
+      tone: "error",
+      retry: true,
+    };
+  if (/failed to fetch|fetch failed|network|timeout|timed out|connection/i.test(message))
     return {
       title: "Couldn’t connect to AI",
       description: "Check your connection and try again. Your journal data hasn’t changed.",

@@ -21,8 +21,19 @@ vi.mock("@/components/filter-bar", () => ({
 }));
 vi.mock("@/lib/use-api", () => ({
   postJson: (...args: unknown[]) => state.post(...args),
-  useApi: () => ({
+  useApi: (url: string | null) => ({
+    refresh: vi.fn(),
     data: {
+      ...(url === "/api/settings"
+        ? {
+            aiProvider: "compatible",
+            aiConnections: {
+              compatible: { configured: true, model: "tutorial-model" },
+              openai: { configured: false },
+              anthropic: { configured: false },
+            },
+          }
+        : {}),
       metrics: { ...computeMetrics([]), closedTrades: 1 },
       trades: [],
       intraday: [],
@@ -48,6 +59,7 @@ vi.mock("@/components/voice-note", () => ({ VoiceNote: () => null }));
 vi.mock("@/components/attachments", () => ({ Attachments: () => null }));
 vi.mock("@/components/review-export", () => ({ ReviewExport: () => null }));
 const { AskJournal } = await import("../src/components/ask-journal");
+const { default: AiPage } = await import("../src/app/ai/page");
 const { default: JournalDayPage } = await import("../src/app/journal/[date]/page");
 
 let container: HTMLDivElement;
@@ -88,6 +100,48 @@ const suggestion = "What's my most expensive mistake?";
 const reply = (answer: string) => ({
   answer,
   scope: { label: "Account A · UTC", timeZone: "UTC" },
+});
+
+it("clears a conversation while thinking and ignores its late reply", async () => {
+  const outstanding = deferred();
+  state.post
+    .mockResolvedValueOnce(reply("First answer"))
+    .mockReturnValueOnce(outstanding.promise)
+    .mockResolvedValueOnce(reply("New chat answer"));
+  await act(async () => root.render(createElement(AiPage)));
+
+  const send = async (question: string) => {
+    const input = container.querySelector("textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+        input,
+        question,
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Send message"]')!.click(),
+    );
+  };
+
+  await send("First question");
+  await send("Slow question");
+  const signal = state.post.mock.calls[1]?.[3] as AbortSignal;
+  expect(container.querySelector('[data-chat-state="active"]')).toBeTruthy();
+  const status = container.querySelector('[role="log"] [role="status"]')!;
+  expect(status.querySelector('[aria-hidden="true"]')?.children).toHaveLength(3);
+  expect(status.lastElementChild?.textContent).toBe("Thinking…");
+
+  await send("/clear");
+  expect(signal.aborted).toBe(true);
+  expect(state.post).toHaveBeenCalledTimes(2);
+  expect(container.querySelector('[data-chat-state="empty"]')).toBeTruthy();
+  await act(async () => outstanding.resolve(reply("Stale answer")));
+  expect(container.querySelector('[role="log"]')?.textContent).toBe("");
+
+  await send("New question");
+  expect(state.post.mock.calls[2]?.[1]).toMatchObject({ history: [] });
+  expect(container.textContent).toContain("New chat answer");
 });
 
 it("sends the full current filter snapshot and displays the server-confirmed scope", async () => {

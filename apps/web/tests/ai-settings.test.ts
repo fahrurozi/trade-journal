@@ -178,13 +178,13 @@ describe("AI provider settings", () => {
 describe("OpenAI-compatible provider", () => {
   const server = "http://localhost:11434/v1";
   const local = { aiProvider: "compatible", aiModel: "llama-fixture", compatibleBaseUrl: server };
-  const completion = (content: string) =>
+  const completion = (content: string, finishReason = "stop") =>
     Response.json({
       id: "chatcmpl_fixture",
       object: "chat.completion",
       created: 1,
       model: "llama-fixture",
-      choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+      choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: finishReason }],
       usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
     });
 
@@ -220,6 +220,17 @@ describe("OpenAI-compatible provider", () => {
     const body = JSON.parse(init.body as string);
     expect(body).toMatchObject({ model: "llama-fixture", max_tokens: 600 });
     expect(JSON.stringify(body.messages)).toContain("Fixture journal question");
+  });
+
+  it("reports when a reasoning model exhausts the output budget without answering", async () => {
+    await save(local);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => completion("", "length")),
+    );
+    await expect(runAi("Fixture journal question", 4096)).rejects.toThrow(
+      "AI ran out of output tokens",
+    );
   });
 
   it("sends a saved key only to the server URL it was saved with", async () => {

@@ -142,16 +142,20 @@ it.each([
   expect(runAi).not.toHaveBeenCalled();
 });
 
-it("does not widen an empty account or empty filter result", async () => {
+it("answers without journal data when filters are empty and keeps recaps scoped", async () => {
   for (const filters of [
     { accounts: "empty" },
     { symbol: "NOT_PRESENT" },
     { accounts: "a", status: "loss" },
   ]) {
-    expect((await ask(request({ question: "Any trades?", filters }))).status).toBe(400);
+    const response = await ask(request({ question: "Halo, bagaimana cara impor?", filters }));
+    expect(response.status).toBe(200);
+    expect(prompt()).toContain("No journal trades match");
+    expect(prompt()).toContain("Halo, bagaimana cara impor?");
+    expect(prompt()).not.toMatch(/ONLY_A|ONLY_B|Overall:/);
     expect((await recap(request({ date: "2026-09-15", filters }))).status).toBe(400);
   }
-  expect(runAi).not.toHaveBeenCalled();
+  expect(runAi).toHaveBeenCalledTimes(3);
 });
 
 it("applies every supported journal filter using the same predicate as the visible day", async () => {

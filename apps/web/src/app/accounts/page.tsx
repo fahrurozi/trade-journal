@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useState } from "react";
+import Link from "next/link";
 import { Archive, ArchiveRestore, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { AccountCreateForm } from "@/components/account-create-form";
 import { FilterBar } from "@/components/filter-bar";
@@ -170,6 +171,13 @@ function Accounts() {
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
+              {account.broker === "bitget" && account.connected && !account.archivedAt && (
+                <Button asChild size="sm" variant="outline">
+                  <Link href={`/import?bitgetAccount=${encodeURIComponent(account.id)}`}>
+                    Import Bitget history
+                  </Link>
+                </Button>
+              )}
               {account.snapshot && (
                 <div className="text-sm">
                   Broker equity:{" "}

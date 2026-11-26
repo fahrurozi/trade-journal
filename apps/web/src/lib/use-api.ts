@@ -70,13 +70,18 @@ export const postJson = async <T = unknown>(
   url: string,
   body: unknown,
   method: "POST" | "PATCH" | "PUT" | "DELETE" = "POST",
+  signal?: AbortSignal,
 ): Promise<T> => {
   const response = await fetch(url, {
     method,
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
+    ...(signal ? { signal } : {}),
   });
-  const data = (await response.json()) as T & { error?: string };
-  if (!response.ok) throw new Error(data.error ?? `Request failed (${response.status})`);
+  const data = (await response.json().catch(() => {
+    signal?.throwIfAborted();
+    throw new Error(`Unexpected server response (HTTP ${response.status}).`);
+  })) as T & { error?: string };
+  if (!response.ok) throw new Error(data?.error ?? `Request failed (${response.status})`);
   return data;
 };

@@ -10,7 +10,10 @@ const state = vi.hoisted(() => ({
   zone: "America/New_York",
   settingsError: null as string | null,
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: state.push }) }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: state.push }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 vi.mock("@/components/filter-bar", () => ({ FilterBar: () => null }));
 vi.mock("@/lib/use-api", () => ({
   postJson: (...args: unknown[]) => state.post(...args),

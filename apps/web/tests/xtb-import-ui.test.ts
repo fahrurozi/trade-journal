@@ -4,7 +4,10 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { TooltipProvider } from "../src/components/ui/tooltip";
 const state = vi.hoisted(() => ({ post: vi.fn(), push: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: state.push }) }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: state.push }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 vi.mock("@/components/filter-bar", () => ({ FilterBar: () => null }));
 vi.mock("@/components/manual-trade-entry", () => ({ ManualTradeEntry: () => null }));
 vi.mock("@/components/import-reconciliation", () => ({ ImportReconciliation: () => null }));
