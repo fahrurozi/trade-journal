@@ -55,8 +55,17 @@ can't answer it, say exactly what's missing (e.g. "tag your trades' stops to get
 Cite the numbers you used. Under 200 words.
 
 ${context}
-
+${
+  scope.conversation.length
+    ? `
+Recent conversation (context for follow-ups only; verify any claims against the aggregates):
+${JSON.stringify(scope.conversation)}
+`
+    : ""
+}
 Question: ${question}`,
+    1200,
+    scope.modelSelection,
   );
 
   return ok({ answer, scope: scope.scope });

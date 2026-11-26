@@ -23,4 +23,6 @@ USER node
 VOLUME /data
 EXPOSE 3000
 ENV PORT=3000 HOSTNAME=0.0.0.0
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
+  CMD node -e 'fetch("http://127.0.0.1:" + process.env.PORT + "/login").then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))'
 CMD ["node", "apps/web/server.js"]

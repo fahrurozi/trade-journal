@@ -16,7 +16,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { OptionSelect } from "./ui/option-select";
 
-export function AiSettings() {
+export function AiSettings({ onSaved }: { onSaved?: () => void } = {}) {
   const { data, error, loading, refresh } = useApi<AiSettingsPayload>("/api/settings");
   const [provider, setProvider] = useState<AiProvider>("anthropic");
   const [model, setModel] = useState(AI_DEFAULT_MODELS.anthropic);
@@ -25,6 +25,8 @@ export function AiSettings() {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState("");
   const [saved, setSaved] = useState("");
+  const [models, setModels] = useState<string[]>([]);
+  const [listing, setListing] = useState(false);
 
   useEffect(() => {
     if (!data) return;
@@ -70,10 +72,28 @@ export function AiSettings() {
       setApiKey("");
       setSaved(remove ? `${name} key removed.` : `${name} settings saved.`);
       refresh();
+      onSaved?.();
     } catch (cause) {
       setFailure(cause instanceof Error ? cause.message : "Couldn’t save AI settings.");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const loadModels = async () => {
+    setListing(true);
+    setFailure("");
+    try {
+      const { models } = await postJson<{ models: string[] }>("/api/ai/models", {
+        baseUrl,
+        apiKey,
+      });
+      setModels(models);
+      if (!models.length) setFailure("No models found. Enter a model ID manually.");
+    } catch (cause) {
+      setFailure(cause instanceof Error ? cause.message : "Could not load models.");
+    } finally {
+      setListing(false);
     }
   };
 
@@ -110,6 +130,7 @@ export function AiSettings() {
                 setProvider(next);
                 setModel(data?.aiConnections[next].model ?? AI_DEFAULT_MODELS[next]);
                 setApiKey("");
+                setModels([]);
                 setSaved("");
                 setFailure("");
               }}
@@ -150,6 +171,7 @@ export function AiSettings() {
               placeholder="http://localhost:11434/v1"
               onChange={(event) => {
                 setBaseUrl(event.target.value);
+                setModels([]);
                 setSaved("");
               }}
               autoComplete="off"
@@ -189,6 +211,33 @@ export function AiSettings() {
           />
           <p className="text-xs text-muted-foreground">{keyHint}</p>
         </div>
+        {compatible && (
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              disabled={disabled || listing || !baseUrl.trim()}
+              onClick={loadModels}
+            >
+              {listing ? "Loading models…" : "Load models"}
+            </Button>
+            {!!models.length && (
+              <OptionSelect
+                aria-label="Discovered models"
+                value={models.includes(model) ? model : ""}
+                onValueChange={setModel}
+              >
+                <option value="" disabled>
+                  Select a discovered model
+                </option>
+                {models.map((id) => (
+                  <option value={id} key={id}>
+                    {id}
+                  </option>
+                ))}
+              </OptionSelect>
+            )}
+          </div>
+        )}
         {(error || failure) && (
           <p role="alert" className="text-xs text-destructive">
             {failure || error}
@@ -203,6 +252,7 @@ export function AiSettings() {
           <Button
             disabled={
               disabled ||
+              listing ||
               !model.trim() ||
               (compatible ? !baseUrl.trim() : !apiKey.trim() && !connection?.configured)
             }

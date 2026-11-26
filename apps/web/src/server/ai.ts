@@ -39,8 +39,12 @@ const languageModel = (provider: AiProvider, apiKey: string | null, model: strin
     : createAnthropic({ apiKey: apiKey! })(model);
 };
 
-export const runAi = async (prompt: string, maxOutputTokens = 1200): Promise<string> => {
-  const provider = getAiProvider();
+export const runAi = async (
+  prompt: string,
+  maxOutputTokens = 1200,
+  selection?: { provider: AiProvider; model: string },
+): Promise<string> => {
+  const provider = selection?.provider ?? getAiProvider();
   if (!aiProviderConfigured(provider)) {
     throw new Error(
       provider === "compatible"
@@ -50,7 +54,7 @@ export const runAi = async (prompt: string, maxOutputTokens = 1200): Promise<str
   }
   try {
     const result = await generateText({
-      model: languageModel(provider, getAiKey(provider), getAiModel(provider)),
+      model: languageModel(provider, getAiKey(provider), selection?.model ?? getAiModel(provider)),
       ...(provider === "openai" ? { providerOptions: { openai: { store: false } } } : {}),
       system: SYSTEM,
       prompt,

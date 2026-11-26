@@ -1,4 +1,4 @@
-import { connect, listBrokers, type BrokerId } from "@luxalgo/broker-sdk";
+import { connect, listBrokers as listSdkBrokers, type BrokerId } from "@luxalgo/broker-sdk";
 import { and, eq } from "drizzle-orm";
 import type { ImportedExecution } from "@luxalgo/journal-importers";
 import { accounts, db, executions } from "@/db";
@@ -16,8 +16,9 @@ import {
 } from "./ibkr-sync-timezone";
 import { withoutSummaryRows } from "./ibkr-flex-xml-import";
 
-/** All broker connectivity goes through @luxalgo/broker-sdk, never direct API code. */
-export { listBrokers };
+import { bitgetBroker, fetchBitgetHistory } from "./bitget";
+
+export const listBrokers = () => [...listSdkBrokers(), bitgetBroker];
 
 /** The asset class whose fills a broker's complete position list can vouch for. */
 const CHECKED_ASSET_CLASS: Record<string, string> = { webull: "equity", binance: "futures" };
@@ -68,25 +69,31 @@ export const syncAccount = async (accountId: string): Promise<SyncOutcome> => {
     hasSyncedFills && account.lastSyncAt
       ? new Date(Date.parse(account.lastSyncAt) - HISTORY_OVERLAP_MS).toISOString()
       : undefined;
-  const connection = connect({
-    broker: account.broker as BrokerId,
-    credentials,
-    ...(historySince !== undefined ? { historySince } : {}),
-    ...(statementTimeZone !== undefined ? { statementTimeZone } : {}),
-    ...(isIbkrSyncAccount(account) ? { fetch: flexExecutionRowsOnly } : {}),
-    // Some brokers rotate tokens on every fetch (Questrade): persist or die.
-    onCredentialsRotated: (next: Record<string, string>) => {
-      db.update(accounts)
-        .set({ credentialsEnc: encryptJson(next) })
-        .where(eq(accounts.id, accountId))
-        .run();
-    },
-  } as Parameters<typeof connect>[0]);
+  const bitget =
+    account.broker === bitgetBroker.id ? await fetchBitgetHistory(credentials, historySince) : null;
+  const connection = bitget
+    ? null
+    : connect({
+        broker: account.broker as BrokerId,
+        credentials,
+        ...(historySince !== undefined ? { historySince } : {}),
+        ...(statementTimeZone !== undefined ? { statementTimeZone } : {}),
+        ...(isIbkrSyncAccount(account) ? { fetch: flexExecutionRowsOnly } : {}),
+        // Some brokers rotate tokens on every fetch (Questrade): persist or die.
+        onCredentialsRotated: (next: Record<string, string>) => {
+          db.update(accounts)
+            .set({ credentialsEnc: encryptJson(next) })
+            .where(eq(accounts.id, accountId))
+            .run();
+        },
+      } as Parameters<typeof connect>[0]);
 
-  const snapshot = await connection.fetchSnapshot();
+  const snapshot = connection ? await connection.fetchSnapshot() : null;
   const syncedAt = nowIso();
 
-  const trades = snapshot.accounts.flatMap((brokerAccount) => brokerAccount.trades);
+  const trades =
+    bitget?.trades ?? snapshot!.accounts.flatMap((brokerAccount) => brokerAccount.trades);
+  const positions = snapshot?.accounts.flatMap((a) => a.positions) ?? [];
   // Option P&L needs the contract size; the broker's value never replaces the user's.
   const multipliers = getMultipliers();
   const stated = trades.filter(
@@ -100,7 +107,7 @@ export const syncAccount = async (accountId: string): Promise<SyncOutcome> => {
   // which unlabeled fills reach back before the start of its history.
   const checked = CHECKED_ASSET_CLASS[account.broker ?? ""];
   const brokerQuantities = new Map<string, number>();
-  for (const position of snapshot.accounts.flatMap((a) => a.positions)) {
+  for (const position of positions) {
     // Hedge-mode sides replay in their own groups, so they say nothing about one-way fills.
     if (position.positionSide) continue;
     brokerQuantities.set(
@@ -149,8 +156,7 @@ export const syncAccount = async (accountId: string): Promise<SyncOutcome> => {
     });
   };
 
-  const equity = snapshot.accounts.reduce((total, a) => total + a.equity, 0);
-  const positions = snapshot.accounts.flatMap((a) => a.positions);
+  const equity = snapshot?.accounts.reduce((total, a) => total + a.equity, 0) ?? null;
   const result = db.transaction(
     () => {
       if (statementTimeZone !== undefined) {
@@ -187,7 +193,9 @@ export const syncAccount = async (accountId: string): Promise<SyncOutcome> => {
       db.update(accounts)
         .set({
           lastSyncAt: syncedAt,
-          snapshotJson: JSON.stringify({ equity, positions, fetchedAt: snapshot.fetchedAt }),
+          snapshotJson: snapshot
+            ? JSON.stringify({ equity, positions, fetchedAt: snapshot.fetchedAt })
+            : null,
           ...(statementTimeZone !== undefined && inserted.inserted > 0
             ? { ibkrSyncTimeZone: statementTimeZone }
             : {}),
@@ -210,6 +218,13 @@ export const syncAccount = async (accountId: string): Promise<SyncOutcome> => {
     if (result.skippedReasons.length < 5)
       result.skippedReasons.push(
         `${trimmed} fill(s) also closed a position opened before the broker's available history; only the part that history covers was kept.`,
+      );
+  }
+  if (bitget?.skipped) {
+    result.skipped += bitget.skipped;
+    if (result.skippedReasons.length < 5)
+      result.skippedReasons.push(
+        `${bitget.skipped} Bitget fill(s) had invalid data or used a quote currency outside this account’s selected market.`,
       );
   }
   if (untimed > 0) {

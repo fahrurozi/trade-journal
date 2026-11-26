@@ -7,6 +7,7 @@ import {
 import { db, accounts, playbooks } from "@/db";
 import { describeFilters } from "@/lib/filter-description";
 import { requireValue } from "./api";
+import { isAiProvider } from "@/lib/ai-settings";
 import { getTimeZone } from "./settings";
 
 export function isDay(value: unknown): value is string {
@@ -23,7 +24,14 @@ export function readAiRequest(value: unknown, field: "question" | "date") {
   requireValue(value && typeof value === "object" && !Array.isArray(value), "Invalid AI request");
   const body = value as Record<string, unknown>;
   requireValue(
-    Object.keys(body).every((key) => [field, "filters", "timeZone"].includes(key)),
+    Object.keys(body).every((key) =>
+      [
+        field,
+        "filters",
+        "timeZone",
+        ...(field === "question" ? ["history", "modelSelection"] : []),
+      ].includes(key),
+    ),
     "Unknown AI request field",
   );
   requireValue(
@@ -106,6 +114,33 @@ export function readAiRequest(value: unknown, field: "question" | "date") {
         body.question.length <= 10000,
       "question is required (maximum 10000 characters)",
     );
+  const history = body.history ?? [];
+  requireValue(Array.isArray(history) && history.length <= 4, "Invalid chat history");
+  const conversation = history.map((turn: unknown) => {
+    requireValue(turn && typeof turn === "object", "Invalid chat turn");
+    const { question, answer } = turn as Record<string, unknown>;
+    requireValue(
+      typeof question === "string" &&
+        question.length <= 2000 &&
+        typeof answer === "string" &&
+        answer.length <= 3000,
+      "Invalid chat turn",
+    );
+    return { question, answer };
+  });
+  let modelSelection;
+  if (body.modelSelection !== undefined) {
+    requireValue(
+      body.modelSelection && typeof body.modelSelection === "object",
+      "Invalid AI model selection",
+    );
+    const { provider, model } = body.modelSelection as Record<string, unknown>;
+    requireValue(
+      isAiProvider(provider) && typeof model === "string" && model.trim() && model.length <= 200,
+      "Invalid AI model selection",
+    );
+    modelSelection = { provider, model: model.trim() };
+  }
   const label = (privateMode: boolean) =>
     [
       date,
@@ -117,6 +152,8 @@ export function readAiRequest(value: unknown, field: "question" | "date") {
       .join(" · ");
   return {
     filters,
+    conversation,
+    modelSelection,
     timeZone,
     accounts: selectedAccounts,
     question: typeof body.question === "string" ? body.question.trim() : "",

@@ -65,6 +65,14 @@ docker compose up -d
 # http://localhost:3000, data persisted in ./data on the host
 ```
 
+### Deploy a fork with Dokploy
+
+The Docker workflow publishes an amd64 image to GHCR on pushes to `main`. Set the Dokploy
+application's Docker image to `ghcr.io/<owner>/<repo>:development`, using a GHCR read credential
+when the package is private. Route traffic to container port `3000` and mount a persistent volume
+at `/data`. Set the application's deployment webhook URL as the GitHub Actions secret
+`DOKPLOY_WEBHOOK_URL`. The workflow calls it after publishing the image.
+
 ### Configuration (all optional)
 
 | Env var              | Effect                                                                                                   |
@@ -88,6 +96,17 @@ Deploy anywhere a Node process and a persistent disk exist: Docker, Railway, Fly
 Optional historical market data powers estimated MAE/MFE and candle replay on closed trades, with Vela™ rendering the charts. Configure a connection or upload candle CSVs in **Settings → Market data**. No provider is enabled or selected by default. See [Market data and replay](#market-data-and-replay) below and the [market data guide](docs/market-data.md) for setup, calculation definitions, and coverage limits.
 
 The **Prop firms** sidebar tracks evaluation/reset costs, refunds, payout requests, and actual receipts across your own firms and accounts. It includes cash ROI, partial payouts, reversals, renewal reminders, attachments, and generic CSV import/export. See [Prop firm tracking](#prop-firm-tracking) below and the [prop firm guide and research](docs/prop-firms.md) for workflows and metric definitions.
+
+### AI chat and Bitget sync
+
+Open **AI** to chat over the selected journal filters. In **AI settings**, set an OpenAI-compatible
+server URL, add its key if required, and use **Load models** to select a default. Switch models
+from the chat dropdown. Use the paperclip to preview and review a statement before importing it.
+Statement parsing uses the existing OpenAI or Anthropic parsers.
+
+Under **Import → Broker sync**, choose **Bitget** and connect a read-only HMAC key. Connect one
+journal account per Classic market: USDT-quoted spot, USDT-M futures, or USDC-M futures. Sync reads
+up to 90 days of fills. It converts base-asset fees at the fill price and omits fees in third tokens.
 
 ### Add a trade manually
 
